@@ -28,8 +28,7 @@ def conectar_google_sheets():
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
         
-        print(f"📄 Carregando credenciais de: {CREDENTIALS_FILE}")
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_CREDENTIALS, scope)
         
         print("🔐 Autorizando cliente...")
         client = gspread.authorize(creds)
