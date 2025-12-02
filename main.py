@@ -114,7 +114,11 @@ Sou da *Allycar* e temos ofertas especiais de veículos em {cidade}! 🚗
         # REGISTRAR CONVERSA NO WEBHOOK
         try:
             import requests
-            response = requests.post('http://localhost:5000/register_conversation', 
+
+            # Detectar se está em produção ou local
+            webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:5000')
+            
+            response = requests.post(f'{webhook_url}/register_conversation', 
                 json={
                     'phone': telefone,
                     'name': nome,
