@@ -9,7 +9,7 @@ COMMERCIAL_WHATSAPP = os.getenv('COMMERCIAL_WHATSAPP')
 
 # Google Sheets
 SPREADSHEET_NAME = os.getenv('SPREADSHEET_NAME', 'Leads_Allycar')
-CREDENTIALS_FILE = 'credentials.json'
+GOOGLE_CREDENTIALS = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 
 # Horários comerciais
 BUSINESS_HOURS = {
