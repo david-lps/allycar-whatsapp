@@ -11,7 +11,7 @@ from config import (
     TWILIO_AUTH_TOKEN,
     TWILIO_WHATSAPP_NUMBER,
     SPREADSHEET_NAME,
-    GOOGLE_CREDENTIALS,
+    CREDENTIALS_FILE,
     BUSINESS_HOURS
 )
 
@@ -28,7 +28,8 @@ def conectar_google_sheets():
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
         
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_CREDENTIALS, scope)
+        # creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_CREDENTIALS, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
 
         print("🔐 Autorizando cliente...")
         client = gspread.authorize(creds)
