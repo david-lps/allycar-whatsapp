@@ -117,7 +117,7 @@ Sou da *Allycar* e temos ofertas especiais de veículos em {cidade}! 🚗
             import requests
 
             # Detectar se está em produção ou local
-            webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:5000')
+            webhook_url = "https://allycar-whatsapp-production.up.railway.app"
             
             response = requests.post(f'{webhook_url}/register_conversation', 
                 json={
