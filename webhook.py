@@ -336,4 +336,5 @@ if __name__ == '__main__':
     print("📱 Endpoint: http://localhost:5000/webhook/whatsapp")
     print("🧪 Teste: http://localhost:5000/test/send")
     print("\n⚠️  Lembre-se de configurar o webhook no Twilio Console!")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    PORT = int(os.getenv("PORT", 5000))
+    app.run(host='0.0.0.0', port=PORT, debug=False)
