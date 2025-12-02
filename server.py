@@ -1,20 +1,18 @@
-import threading
 import os
-from flask import Flask, request
-import webhook  # importa seu webhook.py
-import main     # importa seu main.py
+import threading
+from flask import Flask, request, jsonify
+import webhook   # seu webhook.py
+import main      # seu main.py
 
 app = Flask(__name__)
 
+
 # ==========================================
-#  Rotas do webhook (Twilio → sua API)
+# ROTA PRINCIPAL DO TWILIO WEBHOOK
 # ==========================================
 @app.route("/webhook", methods=["POST"])
 def whatsapp_webhook():
-    """
-    Esta rota recebe POST do Twilio e passa para o handler
-    dentro do webhook.py
-    """
+    """Recebe mensagens do Twilio e delega ao handler dentro do webhook.py"""
     try:
         return webhook.app.full_dispatch_request()
     except Exception as e:
@@ -23,28 +21,22 @@ def whatsapp_webhook():
 
 
 # ==========================================
-# Inicialização paralela
+# ROTA PARA DISPARAR OS LEADS DO MAIN.PY
 # ==========================================
-def start_worker():
-    """
-    Roda o main.py continuamente.
-    """
+@app.route("/run-job", methods=["POST"])
+def run_job():
+    """Dispara o processamento de leads manualmente ou via API"""
     try:
-        main.__main__()  # chama sua função principal
-    except AttributeError:
-        # Caso main.py não tenha main(), roda como módulo
-        import main as m
+        threading.Thread(target=main.processar_leads).start()
+        return jsonify({"ok": True, "message": "Job iniciado"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
 
 
+# ==========================================
+# INÍCIO DO SERVIDOR
+# ==========================================
 if __name__ == "__main__":
-
-    # Iniciar o main.py em thread paralela
-    worker_thread = threading.Thread(target=start_worker)
-    worker_thread.daemon = True
-    worker_thread.start()
-
-    print("🚀 Worker iniciado (main.py). Iniciando servidor Flask...")
-
-    # Servidor Flask
     port = int(os.getenv("PORT", 5000))
+    print("🚀 Servidor Flask iniciado. Webhook ativo!")
     app.run(host="0.0.0.0", port=port)
