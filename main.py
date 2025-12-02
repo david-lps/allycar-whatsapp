@@ -4,6 +4,7 @@ from twilio.rest import Client
 from datetime import datetime
 import pytz
 import time
+import os
 
 # Importar configurações do arquivo config.py
 from config import (
