@@ -3,8 +3,8 @@ twilio
 python-dotenv
 gspread
 oauth2client
-pytz
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+pytz
 requests
