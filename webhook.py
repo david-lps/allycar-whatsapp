@@ -316,6 +316,16 @@ def health():
     """Health check"""
     return {'status': 'ok'}, 200
 
+@app.route('/trigger-send', methods=['GET', 'POST'])
+def trigger_send():
+    """Disparar envio de mensagens manualmente"""
+    try:
+        from main import processar_leads
+        processar_leads()
+        return {'status': 'success', 'message': 'Envio iniciado!'}, 200
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}, 500
+
 
 # =====================================
 # EXECUÇÃO
