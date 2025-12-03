@@ -26,7 +26,6 @@ def notificar_whatsapp_comercial(lead_info):
 👤 Nome: {lead_info['name']}
 📱 Telefone: {lead_info['phone']}
 🚗 Interesse: {lead_info['category']}
-⏰ Horário: {lead_info['timestamp']}
 
 💬 Mensagem do cliente:
 "{lead_info['message']}"
