@@ -19,53 +19,12 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 # Armazenar estado das conversas (em produção, use banco de dados)
 conversations = {}
 
-# =====================================
-# FUNÇÕES DE ENVIO
-# =====================================
-
-def enviar_mensagem_inicial(telefone, nome, cidade):
-    """Envia mensagem inicial com opções"""
-    mensagem = f"""Olá *{nome}*! 👋
-
-Sou da *Allycar* e temos ofertas especiais de veículos em {cidade}! 🚗
-
-Qual categoria te interessa?
-
-1️⃣ - Carros Econômicos
-2️⃣ - SUVs
-3️⃣ - Carros de Luxo
-4️⃣ - Utilitários
-5️⃣ - Falar com consultor
-
-Responda com o número da opção!"""
-
-    try:
-        message = client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=mensagem,
-            to=telefone
-        )
-        
-        # Inicializar conversa
-        conversations[telefone] = {
-            'name': nome,
-            'city': cidade,
-            'stage': 'awaiting_category',
-            'interested': False
-        }
-        
-        return True, message.sid
-    except Exception as e:
-        return False, str(e)
-
-
 def notificar_whatsapp_comercial(lead_info):
     """Notifica WhatsApp comercial sobre lead interessado"""
     mensagem = f"""🚨 *NOVO LEAD INTERESSADO!*
 
 👤 Nome: {lead_info['name']}
 📱 Telefone: {lead_info['phone']}
-🏙️ Cidade: {lead_info['city']}
 🚗 Interesse: {lead_info['category']}
 ⏰ Horário: {lead_info['timestamp']}
 
@@ -98,6 +57,10 @@ def webhook_whatsapp():
     # Dados da mensagem recebida
     from_number = request.form.get('From')  # whatsapp:+5511999999999
     body = request.form.get('Body', '').strip()
+    button_payload = request.form.get('ButtonPayload')
+
+    if button_payload:
+        body = button_payload  # Normaliza o valor do botão
     
     print(f"📥 Mensagem recebida de {from_number}: {body}")
     
@@ -107,7 +70,7 @@ def webhook_whatsapp():
     
     # Verificar se existe conversa ativa
     if from_number not in conversations:
-        msg.body("Olá! Para iniciar, aguarde o envio da nossa oferta ou digite 'INICIAR'")
+        msg.body("Olá! Para iniciar, aguarde o envio da nossa mensagem ou digite 'INICIAR'")
         return str(resp)
     
     conversa = conversations[from_number]
@@ -276,30 +239,6 @@ def register_conversation():
     except Exception as e:
         print(f"❌ Erro ao registrar conversa: {e}")
         return {'status': 'error', 'message': str(e)}, 500
-
-
-# =====================================
-# ROTAS DE TESTE
-# =====================================
-
-@app.route('/test/send', methods=['POST'])
-def test_send():
-    """Rota para testar envio de mensagem"""
-    data = request.json
-    telefone = data.get('phone')
-    nome = data.get('name')
-    cidade = data.get('city')
-    
-    sucesso, resultado = enviar_mensagem_inicial(
-        f'whatsapp:{telefone}',
-        nome,
-        cidade
-    )
-    
-    if sucesso:
-        return {'status': 'success', 'message_sid': resultado}, 200
-    else:
-        return {'status': 'error', 'message': resultado}, 500
 
 
 @app.route('/conversations', methods=['GET'])
