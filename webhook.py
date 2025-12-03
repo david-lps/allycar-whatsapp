@@ -95,32 +95,6 @@ Por favor, nos conte um pouco sobre o que você procura (modelo, valor, prazo, e
             
         elif categoria:
             conversa['category'] = categoria
-            conversa['stage'] = 'confirming_interest'
-            
-            msg.body(f"""Ótima escolha! {categoria} 🚗
-
-Temos várias opções disponíveis.
-
-Deseja receber mais informações e falar com nosso consultor?
-
-Digite:
-✅ SIM - Quero mais informações
-❌ NÃO - Não tenho interesse agora""")
-        else:
-            msg.body("""Desculpe, não entendi sua resposta. 
-
-Por favor, escolha uma opção:
-
-1️⃣ - Carros Econômicos
-2️⃣ - SUVs
-3️⃣ - Carros de Luxo
-4️⃣ - Utilitários
-5️⃣ - Falar com consultor""")
-    
-    # Estágio 2: Confirmando interesse
-    elif stage == 'confirming_interest':
-        if body.upper() in ['SIM', 'S', 'YES', 'Y', '✅']:
-            conversa['interested'] = True
             conversa['stage'] = 'awaiting_message'
             
             msg.body("""Excelente! 🎉
@@ -130,25 +104,18 @@ Por favor, nos conte um pouco sobre o que você procura:
 - Valor que pretende investir
 - Prazo desejado
 - Qualquer outra informação relevante""")
-            
-        elif body.upper() in ['NÃO', 'NAO', 'N', 'NO', '❌']:
-            conversa['interested'] = False
-            conversa['stage'] = 'finished'
-            
-            msg.body("""Tudo bem! Entendo. 😊
 
-Caso mude de ideia, estamos sempre à disposição.
-
-Tenha um ótimo dia! 🚗✨""")
-            
-            # Remover conversa
-            del conversations[from_number]
         else:
-            msg.body("""Por favor, responda com:
+            msg.body("""Desculpe, não entendi sua resposta. 
 
-✅ SIM - Quero mais informações
-❌ NÃO - Não tenho interesse agora""")
-    
+Por favor, escolha uma opção:
+
+1️⃣ - SUVs
+2️⃣ - Econômico
+3️⃣ - Luxo
+4️⃣ - Mini Van
+5️⃣ - Falar com consultor""")
+        
     # Estágio 3: Aguardando mensagem do cliente
     elif stage == 'awaiting_message':
         conversa['message'] = body
@@ -184,10 +151,10 @@ def processar_escolha_categoria(body):
 
     # Mapeamento por número
     map_por_numero = {
-        '1': 'Carros Econômicos',
-        '2': 'SUVs',
-        '3': 'Carros de Luxo',
-        '4': 'Utilitários',
+        '1': 'SUVs',
+        '2': 'Econômico',
+        '3': 'Luxo',
+        '4': 'Mini Van',
         '5': 'consultor'
     }
 
