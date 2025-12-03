@@ -169,9 +169,7 @@ Tenha um ótimo dia! 🚗✨""")
         
         msg.body("""Obrigado! Recebemos sua mensagem. 📝
 
-Um de nossos consultores entrará em contato em breve!
-
-Tempo médio de resposta: 1-2 horas (horário comercial)
+Um de nossos consultores entrará em contato em instantes!
 
 Tenha um ótimo dia! 🚗✨""")
         
