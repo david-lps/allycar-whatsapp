@@ -84,68 +84,87 @@ def formatar_telefone(telefone):
     
     return f'whatsapp:{telefone}'
 
-def enviar_mensagem_inicial_com_opcoes(telefone, nome, cidade):
-    """Envia mensagem inicial com opções interativas - NOVA VERSÃO"""
-    
-    mensagem = f"""Olá *{nome}*! 👋
+def enviar_mensagem_inicial_com_opcoes(telefone, nome):
+    """Mensagem inicial com botões interativos"""
 
-Sou da *Allycar* e temos ofertas especiais de veículos em {cidade}! 🚗
-
-✨ *Qual categoria te interessa?*
-
-1️⃣ - Carros Econômicos
-2️⃣ - SUVs
-3️⃣ - Carros de Luxo
-4️⃣ - Utilitários
-5️⃣ - Falar com consultor
-
-*Responda com o número da opção!*"""
-    
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        
+
         message = client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
-            body=mensagem,
-            to=telefone
+            to=telefone,
+            body=f"Olá *{nome}*! 👋\n\n"
+                 "Aqui é da *Allycar* — Locadora de Veículos Premium em Orlando 🇺🇸🚗\n\n"
+                 "Estamos muito felizes em te ajudar com sua locação!\n\n"
+                 "Por favor, escolha uma opção:",
+            persistent_action=[
+                "reply",  # Mantém botões
+                "listPicker"  # Otimiza exibição no WhatsApp
+            ],
+            interactive={
+                "type": "button",
+                "body": {"text": "Selecione abaixo 👇"},
+                "action": {
+                    "buttons": [
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": "SUV",
+                                "title": "🚙 SUVs"
+                            }
+                        },
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": "ECONOMICO",
+                                "title": "💸 Econômico"
+                            }
+                        },
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": "LUXO",
+                                "title": "✨ Luxo"
+                            }
+                        },
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": "MINIVAN",
+                                "title": "👨‍👩‍👧‍👦 Mini Van"
+                            }
+                        },
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": "CONSULTOR",
+                                "title": "👤 Consultor"
+                            }
+                        }
+                    ]
+                }
+            }
         )
-        
-        print(f"✅ Mensagem com opções enviada para {nome}: {message.sid}")
-        
-        # REGISTRAR CONVERSA NO WEBHOOK
-        try:
-            import requests
 
-            # Detectar se está em produção ou local
-            webhook_url = "https://allycar-whatsapp-production.up.railway.app"
-            
-            response = requests.post(f'{webhook_url}/register_conversation', 
-                json={
-                    'phone': telefone,
-                    'name': nome,
-                    'city': cidade
-                },
-                timeout=2
-            )
-            if response.status_code == 200:
-                print(f"✅ Conversa registrada no webhook para {nome}")
-            else:
-                print(f"⚠️  Aviso: Não foi possível registrar conversa no webhook")
-        except Exception as e:
-            print(f"⚠️  Aviso: Webhook pode não estar rodando - {e}")
-            print(f"   As respostas do cliente não serão processadas!")
+        print(f"✅ Botões enviados para {nome}: {message.sid}")
         
+        # Registra conversa
+        import requests
+        webhook_url = "https://allycar-whatsapp-production.up.railway.app"
+        requests.post(f'{webhook_url}/register_conversation',
+            json={'phone': telefone, 'name': nome},
+            timeout=2
+        )
+
         return True, message.sid
-        
+    
     except Exception as e:
-        print(f"❌ Erro ao enviar para {nome}: {str(e)}")
+        print(f"❌ Erro: {e}")
         return False, str(e)
 
 def processar_leads():
     """Processa leads da planilha e envia mensagens com opções interativas"""
     print("🚀 Iniciando processamento de leads...\n")
-    print("⚠️  IMPORTANTE: Certifique-se que o servidor webhook está rodando!")
-    print("   Execute 'python webhook.py' em outro terminal\n")
     
     # Conecta à planilha
     sheet = conectar_google_sheets()
@@ -180,7 +199,7 @@ def processar_leads():
         # Valida dados
         if not nome or not telefone:
             print(f"⚠️  Pulando linha {idx} - dados incompletos")
-            sheet.update_cell(idx, 5, 'Error - Incomplete data')
+            sheet.update_cell(idx, 6, 'Error - Incomplete data')
             erros += 1
             continue
         
@@ -191,23 +210,21 @@ def processar_leads():
         print(f"📤 Enviando mensagem para {nome} ({telefone_formatado})...")
         sucesso, resultado = enviar_mensagem_inicial_com_opcoes(
             telefone_formatado, 
-            nome, 
-            cidade
+            nome 
         )
         
         if sucesso:
             # Atualiza planilha
-            sheet.update_cell(idx, 5, 'Sent')
-            sheet.update_cell(idx, 6, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            sheet.update_cell(idx, 6, 'Sent')
+            sheet.update_cell(idx, 7, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             enviados += 1
             print(f"✅ Sucesso! O cliente vai receber opções interativas")
             print(f"   As respostas serão processadas pelo webhook")
         else:
-            sheet.update_cell(idx, 5, f'Error: {resultado[:50]}')
+            sheet.update_cell(idx, 6, f'Error: {resultado[:50]}')
             erros += 1
         
         # Delay entre mensagens (respeitar limites Twilio)
-        print(f"⏳ Aguardando 2 segundos antes da próxima mensagem...")
         time.sleep(2)
     
     # Relatório final
@@ -220,12 +237,10 @@ def processar_leads():
     print(f"📝 Total processado: {len(leads)}")
     print("="*60)
     print("\n💡 PRÓXIMOS PASSOS:")
-    print("   1. Os clientes vão responder escolhendo uma opção (1-5)")
+    print("   1. Os clientes vão responder")
     print("   2. O webhook vai capturar as respostas automaticamente")
     print("   3. Leads interessados vão gerar notificação para o WhatsApp comercial")
     print("   4. Acompanhe os logs do webhook em tempo real!")
-    print("\n🔍 Para ver conversas ativas:")
-    print("   curl http://localhost:5000/conversations")
     print("="*60)
 
 # =====================================
@@ -239,7 +254,7 @@ if __name__ == "__main__":
 ║              🚗 SISTEMA ALLYCAR - WHATSAPP BOT 🚗             ║
 ║                                                              ║
 ║  Sistema de envio automatizado de mensagens com opções       ║
-║  interativas para leads de locação de veículos              ║
+║  interativas para leads de locação de veículos               ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
