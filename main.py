@@ -85,81 +85,49 @@ def formatar_telefone(telefone):
     return f'whatsapp:{telefone}'
 
 def enviar_mensagem_inicial_com_opcoes(telefone, nome):
-    """Mensagem inicial com botões interativos"""
+    """Envia mensagem inicial com opções (compatível com Twilio Messaging API atual)"""
+
+    mensagem = f"""Olá *{nome}*! 👋
+
+Aqui é da *Allycar* — Locadora de Veículos Premium em Orlando 🇺🇸🚗
+
+Estamos muito felizes em te ajudar com sua locação!
+
+✨ Escolha uma opção digitando o número correspondente:
+
+1️⃣ SUVs
+2️⃣ Econômico
+3️⃣ Luxo
+4️⃣ Mini Van
+5️⃣ Falar com consultor
+
+Responda com o número da opção! 👇
+"""
 
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
+        
         message = client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
-            to=telefone,
-            body=f"Olá *{nome}*! 👋\n\n"
-                 "Aqui é da *Allycar* — Locadora de Veículos Premium em Orlando 🇺🇸🚗\n\n"
-                 "Estamos muito felizes em te ajudar com sua locação!\n\n"
-                 "Por favor, escolha uma opção:",
-            persistent_action=[
-                "reply",  # Mantém botões
-                "listPicker"  # Otimiza exibição no WhatsApp
-            ],
-            interactive={
-                "type": "button",
-                "body": {"text": "Selecione abaixo 👇"},
-                "action": {
-                    "buttons": [
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "SUV",
-                                "title": "🚙 SUVs"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "ECONOMICO",
-                                "title": "💸 Econômico"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "LUXO",
-                                "title": "✨ Luxo"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "MINIVAN",
-                                "title": "👨‍👩‍👧‍👦 Mini Van"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "CONSULTOR",
-                                "title": "👤 Consultor"
-                            }
-                        }
-                    ]
-                }
-            }
+            body=mensagem,
+            to=telefone
         )
 
-        print(f"✅ Botões enviados para {nome}: {message.sid}")
-        
-        # Registra conversa
+        print(f"✅ Mensagem enviada para {nome}: {message.sid}")
+
+        # REGISTRA CONVERSA NO WEBHOOK
         import requests
-        webhook_url = "https://allycar-whatsapp-production.up.railway.app"
-        requests.post(f'{webhook_url}/register_conversation',
-            json={'phone': telefone, 'name': nome},
+        webhook_url = os.getenv("WEBHOOK_URL", "https://allycar-whatsapp-production.up.railway.app")
+        
+        requests.post(f"{webhook_url}/register_conversation",
+            json={"phone": telefone, "name": nome},
             timeout=2
         )
 
         return True, message.sid
-    
+
     except Exception as e:
-        print(f"❌ Erro: {e}")
+        print(f"❌ Erro ao enviar para {nome}: {str(e)}")
         return False, str(e)
 
 def processar_leads():
