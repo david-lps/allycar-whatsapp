@@ -182,35 +182,18 @@ Tenha um ótimo dia! 🚗✨""")
 
 
 def processar_escolha_categoria(body):
-    """Processa a escolha de categoria do cliente"""
+    """Processa resposta do botão interativo"""
     body_upper = body.upper().strip()
-    
-    categorias = {
-        '1': 'Carros Econômicos',
-        '2': 'SUVs',
-        '3': 'Carros de Luxo',
-        '4': 'Utilitários',
-        '5': 'consultor'
-    }
-    
-    # Verifica número
-    if body_upper in categorias:
-        return categorias[body_upper]
-    
-    # Verifica palavras-chave
-    if 'ECONOMICO' in body_upper or 'ECONOMICO' in body_upper:
-        return 'Carros Econômicos'
-    elif 'SUV' in body_upper:
-        return 'SUVs'
-    elif 'LUXO' in body_upper:
-        return 'Carros de Luxo'
-    elif 'UTILITARIO' in body_upper:
-        return 'Utilitários'
-    elif 'CONSULTOR' in body_upper or 'FALAR' in body_upper:
-        return 'consultor'
-    
-    return None
 
+    categorias = {
+        'SUV': 'SUVs',
+        'ECONOMICO': 'Carros Econômicos',
+        'LUXO': 'Carros de Luxo',
+        'MINIVAN': 'Mini Vans',
+        'CONSULTOR': 'consultor'
+    }
+
+    return categorias.get(body_upper, None)
 
 # =====================================
 # ROTAS DE INTEGRAÇÃO
@@ -223,12 +206,11 @@ def register_conversation():
         data = request.json
         phone = data.get('phone')
         name = data.get('name')
-        city = data.get('city')
         
         # Registrar conversa
         conversations[phone] = {
             'name': name,
-            'city': city,
+            'city': 'Não informado',
             'stage': 'awaiting_category',
             'interested': False
         }
