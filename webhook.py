@@ -107,7 +107,7 @@ Digite:
 ✅ SIM - Quero mais informações
 ❌ NÃO - Não tenho interesse agora""")
         else:
-            msg.body("""Desculpe, não entendi sua resposta. 😅
+            msg.body("""Desculpe, não entendi sua resposta. 
 
 Por favor, escolha uma opção:
 
@@ -178,20 +178,40 @@ Tenha um ótimo dia! 🚗✨""")
     
     return str(resp)
 
-
 def processar_escolha_categoria(body):
-    """Processa resposta do botão interativo"""
+    """Processa escolha da categoria via número ou texto"""
     body_upper = body.upper().strip()
 
-    categorias = {
-        'SUV': 'SUVs',
-        'ECONOMICO': 'Carros Econômicos',
-        'LUXO': 'Carros de Luxo',
-        'MINIVAN': 'Mini Vans',
-        'CONSULTOR': 'consultor'
+    # Mapeamento por número
+    map_por_numero = {
+        '1': 'Carros Econômicos',
+        '2': 'SUVs',
+        '3': 'Carros de Luxo',
+        '4': 'Utilitários',
+        '5': 'consultor'
     }
 
-    return categorias.get(body_upper, None)
+    if body_upper in map_por_numero:
+        return map_por_numero[body_upper]
+
+    # Mapeamento por keywords (para caso de botões no futuro)
+    map_por_texto = {
+        'ECONOMICO': 'Carros Econômicos',
+        'ECONÔMICO': 'Carros Econômicos',
+        'SUV': 'SUVs',
+        'LUXO': 'Carros de Luxo',
+        'UTILITARIO': 'Utilitários',
+        'UTILITÁRIO': 'Utilitários',
+        'MINIVAN': 'Mini Vans',
+        'CONSULTOR': 'consultor',
+        'FALAR': 'consultor'
+    }
+
+    for key in map_por_texto:
+        if key in body_upper:
+            return map_por_texto[key]
+
+    return None
 
 # =====================================
 # ROTAS DE INTEGRAÇÃO
