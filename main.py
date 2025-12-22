@@ -183,11 +183,10 @@ def processar_leads():
     pulados = 0
     
     for idx, lead in enumerate(leads, start=2):  # Começa em 2 (linha 1 é cabeçalho)
-        nome = lead.get('Name', '')
-        telefone = lead.get('Phone', '')
-        cidade = lead.get('City', '')
-        pais = lead.get('Country', 'Brazil')
-        status = lead.get('Status', '')
+        nome = lead.get('NOME', '')
+        telefone = lead.get('TELEFONE', '')
+        pais = lead.get('PAIS', 'Brazil')
+        status = lead.get('STATUS', '')
         
         # Debug
         print(f"\n📋 Processando linha {idx}: {nome}")
@@ -195,6 +194,13 @@ def processar_leads():
         # Pula se já foi enviado
         if status == 'Sent':
             print(f"⏭️  Pulando {nome} - já enviado")
+            pulados += 1
+            continue
+
+        pais_normalizado = pais.strip().lower()
+        
+        if pais_normalizado not in ['brazil', 'brasil']:
+            print(f"⏭️  Pulando {nome} - país não permitido ({pais})")
             pulados += 1
             continue
         
@@ -211,15 +217,15 @@ def processar_leads():
             erros += 1
             continue
 
+        # Formata telefone
+        telefone_formatado = formatar_telefone(telefone)
+        
         # Verificar se já existe reserva no HQ
         if cliente_ja_tem_reserva(telefone_formatado):
             print(f"⏭️ Pulando {nome} - cliente já possui reserva")
             sheet.update_cell(idx, 5, 'Skipped - Already has reservation')
             pulados += 1
             continue
-        
-        # Formata telefone
-        telefone_formatado = formatar_telefone(telefone)
         
         # Envia mensagem INICIAL com OPÇÕES
         print(f"📤 Enviando mensagem para {nome} ({telefone_formatado})...")
@@ -230,13 +236,13 @@ def processar_leads():
         
         if sucesso:
             # Atualiza planilha
-            sheet.update_cell(idx, 6, 'Sent')
-            sheet.update_cell(idx, 7, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            sheet.update_cell(idx, 7, 'Sent')
+            sheet.update_cell(idx, 8, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             enviados += 1
             print(f"✅ Sucesso! O cliente vai receber opções interativas")
             print(f"   As respostas serão processadas pelo webhook")
         else:
-            sheet.update_cell(idx, 6, f'Error: {resultado[:50]}')
+            sheet.update_cell(idx, 7, f'Error: {resultado[:50]}')
             erros += 1
         
         # Delay entre mensagens (respeitar limites Twilio)
