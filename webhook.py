@@ -125,7 +125,6 @@ Por favor, escolha uma opção:
         lead_info = {
             'name': conversa['name'],
             'phone': from_number.replace('whatsapp:', ''),
-            'city': conversa['city'],
             'category': conversa.get('category', 'Não especificado'),
             'message': body,
             'timestamp': conversa['timestamp']
