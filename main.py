@@ -5,6 +5,8 @@ from datetime import datetime
 import pytz
 import time
 import os
+import http.client
+import json
 
 # Importar configurações do arquivo config.py
 from config import (
@@ -130,6 +132,44 @@ Responda com o número da opção! 👇
         print(f"❌ Erro ao enviar para {nome}: {str(e)}")
         return False, str(e)
 
+def cliente_ja_tem_reserva(telefone):
+    """
+    Consulta a API do HQ para verificar se o telefone já possui reserva
+    Retorna True se encontrar reserva, False se não
+    """
+
+    conn = http.client.HTTPSConnection("api.caagcrm.com")
+
+    headers = {
+        'Authorization': 'Basic dkM1NDdFRFExeEVYekJKV09LS1lOVlBNZVZUYjZaeWVjamJ0M0xsTzROSWNrUTE1alc6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
+    }
+
+    conn.request(
+        "GET",
+        "/api//car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
+        headers=headers
+    )
+
+    res = conn.getresponse()
+    data = res.read().decode("utf-8")
+
+    try:
+        reservas = json.loads(data)
+    except:
+        print("⚠️ Erro ao interpretar resposta do HQ")
+        return False
+
+    telefone_limpo = telefone.replace("whatsapp:", "").replace("+", "")
+
+    for reserva in reservas.get("data", []):
+        telefone_reserva = str(reserva.get("phone", "")).replace("+", "")
+        if telefone_limpo in telefone_reserva:
+            print(f"⛔ Reserva encontrada para {telefone}")
+            return True
+
+    print(f"✅ Nenhuma reserva encontrada para {telefone}")
+    return False
+
 def processar_leads():
     """Processa leads da planilha e envia mensagens com opções interativas"""
     print("🚀 Iniciando processamento de leads...\n")
@@ -169,6 +209,13 @@ def processar_leads():
             print(f"⚠️  Pulando linha {idx} - dados incompletos")
             sheet.update_cell(idx, 6, 'Error - Incomplete data')
             erros += 1
+            continue
+
+        # Verificar se já existe reserva no HQ
+        if cliente_ja_tem_reserva(telefone_formatado):
+            print(f"⏭️ Pulando {nome} - cliente já possui reserva")
+            sheet.update_cell(idx, 5, 'Skipped - Already has reservation')
+            pulados += 1
             continue
         
         # Formata telefone
