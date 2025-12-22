@@ -141,7 +141,7 @@ def cliente_ja_tem_reserva(telefone):
     conn = http.client.HTTPSConnection("api.caagcrm.com")
 
     headers = {
-        'Authorization': 'Basic dkM1NDdFRFExeEVYekJKV09LS1lOVlBNZVZUYjZaeWVjamJ0M0xsTzROSWNrUTE1alc6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
+        'Authorization': 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
     }
 
     conn.request(
