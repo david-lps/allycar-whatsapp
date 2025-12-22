@@ -146,12 +146,15 @@ def cliente_ja_tem_reserva(telefone):
 
     conn.request(
         "GET",
-        "/api//car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
+        "/api/car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
         headers=headers
     )
 
     res = conn.getresponse()
+    print("Status HTTP:", res.status)
+    
     data = res.read().decode("utf-8")
+    print("Resposta bruta da API:", data)
 
     try:
         reservas = json.loads(data)
