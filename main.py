@@ -95,13 +95,12 @@ Aqui é da *Allycar* — Locadora de Veículos Premium em Orlando 🇺🇸🚗
 
 Estamos muito felizes em te ajudar com sua locação!
 
-✨ Escolha uma opção digitando o número correspondente:
+✨ Para que possamos ofecer examente o que voce precisa, escolha uma opção digitando o número correspondente:
 
-1️⃣ SUVs
-2️⃣ Econômico
-3️⃣ Luxo
-4️⃣ Mini Van
-5️⃣ Falar com consultor
+1️⃣ Carros com 5 assentos
+2️⃣ Carros com 7 assentos
+3️⃣ Carros com 9 assentos
+4️⃣ Falar direto com nosso consultor
 
 Responda com o número da opção! 👇
 """
