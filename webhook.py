@@ -109,11 +109,10 @@ Por favor, nos conte um pouco sobre o que você procura:
 
 Por favor, escolha uma opção:
 
-1️⃣ - SUVs
-2️⃣ - Econômico
-3️⃣ - Luxo
-4️⃣ - Mini Van
-5️⃣ - Falar com consultor""")
+1️⃣ Carros com 5 assentos
+2️⃣ Carros com 7 assentos
+3️⃣ Carros com 9 assentos
+4️⃣ Falar direto com nosso consultor""")
         
     # Estágio 3: Aguardando mensagem do cliente
     elif stage == 'awaiting_message':
@@ -149,32 +148,14 @@ def processar_escolha_categoria(body):
 
     # Mapeamento por número
     map_por_numero = {
-        '1': 'SUVs',
-        '2': 'Econômico',
-        '3': 'Luxo',
-        '4': 'Mini Van',
-        '5': 'consultor'
+        '1': '5',
+        '2': '7',
+        '3': '8',
+        '4': 'consultor'
     }
 
     if body_upper in map_por_numero:
         return map_por_numero[body_upper]
-
-    # Mapeamento por keywords (para caso de botões no futuro)
-    map_por_texto = {
-        'ECONOMICO': 'Carros Econômicos',
-        'ECONÔMICO': 'Carros Econômicos',
-        'SUV': 'SUVs',
-        'LUXO': 'Carros de Luxo',
-        'UTILITARIO': 'Utilitários',
-        'UTILITÁRIO': 'Utilitários',
-        'MINIVAN': 'Mini Vans',
-        'CONSULTOR': 'consultor',
-        'FALAR': 'consultor'
-    }
-
-    for key in map_por_texto:
-        if key in body_upper:
-            return map_por_texto[key]
 
     return None
 
