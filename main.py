@@ -89,81 +89,44 @@ def formatar_telefone(telefone):
 
 def enviar_mensagem_inicial_com_opcoes(telefone, nome):
     """
-    Envia mensagem inicial.
-    - Se estiver dentro da janela de 24h: manda texto normal.
-    - Se estiver fora da janela: manda template aprovado (Content API).
+    Envia mensagem inicial usando TEMPLATE aprovado da Twilio
+    O cliente responde com 1, 2, 3 ou 4
     """
 
-    mensagem = f"""Olá *{nome}*! 👋
-
-Aqui é da *Allycar* — Locadora de Veículos Premium em Orlando 🇺🇸🚗
-
-Estamos muito felizes em te ajudar com sua locação!
-
-✨ Para que possamos oferecer exatamente o que você precisa, escolha uma das opções abaixo, digitando o número correspondente:
-
-1️⃣ Carros com 5 assentos
-2️⃣ Carros com 7 assentos
-3️⃣ Carros com 9 assentos
-4️⃣ Falar direto com nosso consultor
-
-Responda com o número da opção! 👇
-"""
-
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
-    # URL do seu webhook (Railway)
-    webhook_url = os.getenv("WEBHOOK_URL", "https://allycar-whatsapp-production.up.railway.app")
-
     try:
-        # 1) TENTA FREEFORM (funciona só se estiver na janela de 24h)
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
         message = client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=telefone,
-            body=mensagem
+
+            # 👇 USO DO TEMPLATE APROVADO
+            content_sid="SEU_TEMPLATE_SID_AQUI",
+            content_variables={
+                "1": nome
+            }
         )
-        print(f"✅ Freeform enviada para {nome}: {message.sid}")
 
-    except Exception as e:
-        # 2) SE FALHAR, ENVIA TEMPLATE (pra iniciar conversa fora da janela)
-        print(f"⚠️ Freeform falhou (provável fora da janela 24h). Motivo: {e}")
+        print(f"✅ Template enviado para {nome}: {message.sid}")
 
-        template_sid = os.getenv("TWILIO_WHATSAPP_TEMPLATE_SID")  # ex: HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-        if not template_sid:
-            return False, "Faltou definir TWILIO_WHATSAPP_TEMPLATE_SID (Content SID do template)."
+        # REGISTRA CONVERSA NO WEBHOOK
+        import requests, os
+        webhook_url = os.getenv(
+            "WEBHOOK_URL",
+            "https://allycar-whatsapp-production.up.railway.app"
+        )
 
-        # Se seu template tem variáveis, ajuste aqui.
-        # Exemplo: {"1": nome}
-        content_variables = {"1": nome}
-
-        try:
-            message = client.messages.create(
-                from_=TWILIO_WHATSAPP_NUMBER,
-                to=telefone,
-                content_sid=template_sid,
-                content_variables=json.dumps(content_variables)
-            )
-            print(f"✅ Template enviado para {nome}: {message.sid}")
-
-        except Exception as e2:
-            print(f"❌ Template também falhou: {e2}")
-            return False, str(e2)
-
-    # 3) REGISTRA CONVERSA NO WEBHOOK (igual antes)
-    try:
-        r = requests.post(
+        requests.post(
             f"{webhook_url}/register_conversation",
             json={"phone": telefone, "name": nome},
-            timeout=5
+            timeout=2
         )
-        if r.status_code == 200:
-            print(f"✅ Conversa registrada no webhook: {nome}")
-        else:
-            print(f"⚠️ Webhook respondeu {r.status_code}: {r.text}")
-    except Exception as e3:
-        print(f"⚠️ Falha ao registrar conversa no webhook: {e3}")
 
-    return True, message.sid
+        return True, message.sid
+
+    except Exception as e:
+        print(f"❌ Erro ao enviar para {nome}: {str(e)}")
+        return False, str(e)
 
 def cliente_ja_tem_reserva(telefone):
     """
