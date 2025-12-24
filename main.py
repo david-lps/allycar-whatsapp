@@ -88,19 +88,12 @@ def formatar_telefone(telefone):
     return f'whatsapp:{telefone}'
 
 def enviar_mensagem_inicial_com_opcoes(telefone, nome):
-    """
-    Envia mensagem inicial usando TEMPLATE aprovado da Twilio
-    O cliente responde com 1, 2, 3 ou 4
-    """
-
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
         message = client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=telefone,
-
-            # 👇 USO DO TEMPLATE APROVADO
             content_sid=TWILIO_WHATSAPP_TEMPLATE_SID,
             content_variables={
                 "1": nome
@@ -109,7 +102,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome):
 
         print(f"✅ Template enviado para {nome}: {message.sid}")
 
-        # REGISTRA CONVERSA NO WEBHOOK
+        # registra conversa
         import requests, os
         webhook_url = os.getenv(
             "WEBHOOK_URL",
@@ -125,7 +118,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome):
         return True, message.sid
 
     except Exception as e:
-        print(f"❌ Erro ao enviar para {nome}: {str(e)}")
+        print(f"❌ Erro ao enviar para {nome}: {e}")
         return False, str(e)
 
 def cliente_ja_tem_reserva(telefone):
