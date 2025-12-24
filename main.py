@@ -101,7 +101,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome):
             to=telefone,
 
             # 👇 USO DO TEMPLATE APROVADO
-            content_sid="SEU_TEMPLATE_SID_AQUI",
+            content_sid=TWILIO_WHATSAPP_TEMPLATE_SID,
             content_variables={
                 "1": nome
             }
