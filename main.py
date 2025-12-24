@@ -95,9 +95,9 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome):
             from_=TWILIO_WHATSAPP_NUMBER,
             to=telefone,
             content_sid=TWILIO_WHATSAPP_TEMPLATE_SID,
-            content_variables={
+            content_variables=json.dumps({
                 "1": nome
-            }
+            })
         )
 
         print(f"✅ Template enviado para {nome}: {message.sid}")
