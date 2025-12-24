@@ -15,7 +15,8 @@ from config import (
     TWILIO_WHATSAPP_NUMBER,
     SPREADSHEET_NAME,
     GOOGLE_CREDENTIALS,
-    BUSINESS_HOURS
+    BUSINESS_HOURS,
+    TWILIO_WHATSAPP_TEMPLATE_SID
 )
 
 # =====================================
