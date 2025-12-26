@@ -137,7 +137,7 @@ def webhook_whatsapp():
     
     # Verificar se existe conversa ativa
     if from_number not in conversations:
-        msg.body("Olá! Para iniciar, aguarde o envio da nossa mensagem ou digite 'INICIAR'")
+        msg.body(texts["start_wait"])
         return str(resp)
     
     conversa = conversations[from_number]
@@ -227,7 +227,7 @@ def register_conversation():
             'city': 'Não informado',
             'stage': 'awaiting_category',
             'interested': False,
-            "language": "es" if country in ["Argentina", "Colombia"] else "pt"
+            'language': data.get('language', 'pt') 
         }
         
         print(f"✅ Conversa registrada: {name} ({phone})")
