@@ -148,8 +148,13 @@ Por favor, escolha uma opção:
             'message': body,
             'timestamp': conversa['timestamp']
         }
-        
-        # notificar_email_comercial(lead_info)
+
+        try:
+            ok = notificar_email_comercial(lead_info)
+            if not ok:
+                print("⚠️ Falha ao enviar email (retornou False), seguindo o fluxo mesmo assim.")
+        except Exception as e:
+            print(f"⚠️ Erro ao enviar email (ignorado para não travar o webhook): {e}")
         
         msg.body("""Obrigado! Recebemos sua mensagem. 📝
 
