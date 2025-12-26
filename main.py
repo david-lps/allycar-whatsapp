@@ -108,7 +108,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
 
             try:
                 msg = EmailMessage()
-                msg["Subject"] = "Allycar | Sua locação em Orlando"
+                msg["Subject"] = "Allycar | Your Vehicle Rental in Orlando"
                 msg["From"] = EMAIL_USER
                 msg["To"] = email_cliente
 
