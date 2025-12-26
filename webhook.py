@@ -25,42 +25,45 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 # Armazenar estado das conversas (em produção, use banco de dados)
 conversations = {}
 
-def notificar_whatsapp_comercial(lead_info):
-    """Notifica o comercial por EMAIL"""
+import smtplib
+from email.message import EmailMessage
+import os
 
-    assunto = "🚨 Novo Lead Allycar"
-    corpo = f"""
-Novo lead interessado 🚗
+def notificar_email_comercial(lead_info):
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "🚨 Novo lead Allycar"
+        msg["From"] = EMAIL_USER
+        msg["To"] = EMAIL_TO
+
+        msg.set_content(f"""
+Novo lead recebido:
 
 Nome: {lead_info['name']}
 Telefone: {lead_info['phone']}
 Interesse: {lead_info['category']}
 
-Mensagem do cliente:
+Mensagem:
 {lead_info['message']}
-"""
+""")
 
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = EMAIL_USER
-        msg["To"] = EMAIL_TO
-        msg["Subject"] = assunto
+        # SMTP com SSL (OBRIGATÓRIO)
+        with smtplib.SMTP_SSL(
+            os.getenv("SMTP_HOST"),
+            int(os.getenv("SMTP_PORT", "465"))
+        ) as server:
+            server.login(
+                os.getenv("SMTP_USER"),
+                os.getenv("SMTP_PASS")
+            )
+            server.send_message(msg)
 
-        msg.attach(MIMEText(corpo, "plain"))
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-
-        print("✅ Email enviado para o comercial")
+        print("✅ Email enviado com sucesso")
         return True
 
     except Exception as e:
         print(f"❌ Erro ao enviar email: {e}")
         return False
-
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
@@ -146,7 +149,7 @@ Por favor, escolha uma opção:
             'timestamp': conversa['timestamp']
         }
         
-        notificar_whatsapp_comercial(lead_info)
+        notificar_email_comercial(lead_info)
         
         msg.body("""Obrigado! Recebemos sua mensagem. 📝
 
