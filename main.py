@@ -170,6 +170,8 @@ Obrigado!
 
         print(f"✅ WhatsApp enviado para {nome} ({pais}): {message.sid}")
 
+        language = "es" if pais_norm in ["argentina", "colombia"] else "pt"
+        
         # registra conversa no webhook (não bloqueante)
         try:
             import requests, os
@@ -179,7 +181,11 @@ Obrigado!
             )
             requests.post(
                 f"{webhook_url}/register_conversation",
-                json={"phone": telefone, "name": nome},
+                json={
+                    "phone": telefone,
+                    "name": nome,
+                    "language": language
+                },
                 timeout=2
             )
         except Exception as e:
