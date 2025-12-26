@@ -6,6 +6,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from main import conectar_google_sheets
+from datetime import datetime
 import os
 
 load_dotenv()
@@ -164,9 +165,9 @@ Por favor, escolha uma opção:
     elif stage == 'awaiting_message':
         conversa['message'] = body
         conversa['stage'] = 'finished'
-        conversa['timestamp'] = request.form.get('MessageTimestamp', '')
+        conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # NOTIFICAR WHATSAPP COMERCIAL
+        # REGISTRAR LEAD QUALIFICADO
         lead_info = {
             'name': conversa['name'],
             'phone': from_number.replace('whatsapp:', ''),
