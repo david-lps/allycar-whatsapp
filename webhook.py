@@ -137,7 +137,14 @@ def webhook_whatsapp():
     
     # Verificar se existe conversa ativa
     if from_number not in conversations:
-        msg.body(texts["start_wait"])
+        msg.body(
+            "Olá! 👋\n"
+            "Por favor, aguarde nossa mensagem inicial para continuar.\n\n"
+            "Hello! 👋\n"
+            "Please wait for our initial message to continue.\n\n"
+            "¡Hola! 👋\n"
+            "Por favor, espere nuestro mensaje inicial para continuar."
+        )
         return str(resp)
     
     conversa = conversations[from_number]
