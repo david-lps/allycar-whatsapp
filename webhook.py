@@ -53,8 +53,8 @@ Mensagem:
             int(os.getenv("SMTP_PORT", "465"))
         ) as server:
             server.login(
-                os.getenv("SMTP_USER"),
-                os.getenv("SMTP_PASS")
+                EMAIL_USER,
+                EMAIL_PASSWORD
             )
             server.send_message(msg)
 
