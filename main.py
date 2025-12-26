@@ -17,7 +17,10 @@ from config import (
     GOOGLE_CREDENTIALS,
     BUSINESS_HOURS,
     TWILIO_WHATSAPP_TEMPLATE_SID_BR,
-    TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
+    TWILIO_WHATSAPP_TEMPLATE_SID_LATAM,
+    EMAIL_USER, 
+    EMAIL_PASSWORD, 
+    EMAIL_TO
 )
 
 # =====================================
@@ -103,7 +106,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
             try:
                 msg = EmailMessage()
                 msg["Subject"] = "Allycar | Sua locação em Orlando"
-                msg["From"] = EMAIL_FROM
+                msg["From"] = EMAIL_USER
                 msg["To"] = email_cliente
 
                 msg.set_content(f"""
