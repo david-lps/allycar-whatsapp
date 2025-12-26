@@ -29,7 +29,26 @@ import smtplib
 from email.message import EmailMessage
 import os
 
+def registrar_lead_qualificado(lead_info):
+
+    from main import conectar_google_sheets
+    
+    try:
+        sheet = conectar_google_sheets() 
+        sheet.append_row([
+            lead_info["name"],
+            lead_info["phone"],
+            lead_info["category"],
+            lead_info["message"],
+            lead_info["timestamp"]
+        ])
+        print("✅ Lead qualificado salvo na planilha")
+    except Exception as e:
+        print(f"⚠️ Falha ao salvar lead na planilha: {e}")
+
 def notificar_email_comercial(lead_info):
+# NAO ESTA SENDO USADO NO MOMENTO 
+    
     try:
         msg = EmailMessage()
         msg["Subject"] = "🚨 Novo lead Allycar"
@@ -150,12 +169,10 @@ Por favor, escolha uma opção:
         }
 
         try:
-            ok = notificar_email_comercial(lead_info)
-            if not ok:
-                print("⚠️ Falha ao enviar email (retornou False), seguindo o fluxo mesmo assim.")
+            registrar_lead_qualificado(lead_info)
         except Exception as e:
-            print(f"⚠️ Erro ao enviar email (ignorado para não travar o webhook): {e}")
-        
+            print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
+
         msg.body("""Obrigado! Recebemos sua mensagem. 📝
 
 Um de nossos consultores entrará em contato em instantes!
