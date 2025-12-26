@@ -54,47 +54,68 @@ def registrar_lead_qualificado(lead_info):
         print(f"⚠️ Erro ao salvar lead qualificado: {e}")
         return False
 
-def notificar_email_comercial(lead_info):
-# NAO ESTA SENDO USADO NO MOMENTO 
-    
-    try:
-        msg = EmailMessage()
-        msg["Subject"] = "🚨 Novo lead Allycar"
-        msg["From"] = EMAIL_USER
-        msg["To"] = EMAIL_TO
-
-        msg.set_content(f"""
-Novo lead recebido:
-
-Nome: {lead_info['name']}
-Telefone: {lead_info['phone']}
-Interesse: {lead_info['category']}
-
-Mensagem:
-{lead_info['message']}
-""")
-
-        # SMTP com SSL (OBRIGATÓRIO)
-        with smtplib.SMTP_SSL(
-            os.getenv("SMTP_HOST"),
-            int(os.getenv("SMTP_PORT", "465"))
-        ) as server:
-            server.login(
-                EMAIL_USER,
-                EMAIL_PASSWORD
-            )
-            server.send_message(msg)
-
-        print("✅ Email enviado com sucesso")
-        return True
-
-    except Exception as e:
-        print(f"❌ Erro ao enviar email: {e}")
-        return False
-
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
 # =====================================
+
+MESSAGES = {
+    "pt": {
+        "start_wait": "Olá! Para iniciar, aguarde o envio da nossa mensagem.",
+        "consultor_intro": """Perfeito! 👏
+
+Um consultor entrará em contato em breve.
+
+Por favor, nos conte um pouco sobre o que você procura (modelo, valor, prazo, etc):""",
+        "ask_details": """Excelente! 🎉
+
+Por favor, nos conte um pouco sobre o que você procura:
+- Modelo preferido
+- Valor que pretende investir
+- Prazo desejado
+- Qualquer outra informação relevante""",
+        "invalid_option": """Desculpe, não entendi sua resposta.
+
+Por favor, escolha uma opção:
+
+1️⃣ Carros com 5 assentos
+2️⃣ Carros com 7 assentos
+3️⃣ Carros com 8 assentos
+4️⃣ Falar direto com nosso consultor""",
+        "final_thanks": """Obrigado! Recebemos sua mensagem. 📝
+
+Um de nossos consultores entrará em contato em instantes!
+
+Tenha um ótimo dia! 🚗✨"""
+    },
+    "es": {
+        "start_wait": "Hola! Para comenzar, espera nuestro mensaje inicial.",
+        "consultor_intro": """¡Perfecto! 👏
+
+Un asesor se pondrá en contacto contigo en breve.
+
+Cuéntanos un poco sobre lo que estás buscando (modelo, presupuesto, fechas, etc.):""",
+        "ask_details": """¡Excelente! 🎉
+
+Cuéntanos un poco más sobre lo que estás buscando:
+- Modelo preferido
+- Presupuesto estimado
+- Fechas del alquiler
+- Cualquier otra información relevante""",
+        "invalid_option": """Lo siento, no entendí tu respuesta.
+
+Por favor, elige una opción:
+
+1️⃣ Autos de 5 plazas
+2️⃣ Autos de 7 plazas
+3️⃣ Autos de 8 plazas
+4️⃣ Hablar directamente con un asesor""",
+        "final_thanks": """¡Gracias! Hemos recibido tu mensaje. 📝
+
+Uno de nuestros asesores se pondrá en contacto contigo en breve.
+
+¡Que tengas un excelente día! 🚗✨"""
+    }
+}
 
 @app.route('/webhook/whatsapp', methods=['POST'])
 def webhook_whatsapp():
@@ -120,6 +141,8 @@ def webhook_whatsapp():
         return str(resp)
     
     conversa = conversations[from_number]
+    lang = conversa.get("language", "pt")
+    texts = MESSAGES[lang]
     stage = conversa['stage']
     
     # ===== FLUXO DE CONVERSA =====
@@ -131,35 +154,16 @@ def webhook_whatsapp():
         if categoria == 'consultor':
             conversa['interested'] = True
             conversa['category'] = 'Falar com consultor'
-            conversa['stage'] = 'awaiting_message'
-            
-            msg.body("""Perfeito! 👏
-
-Um consultor entrará em contato em breve.
-
-Por favor, nos conte um pouco sobre o que você procura (modelo, valor, prazo, etc):""")
+            conversa['stage'] = 'awaiting_message'         
+            msg.body(texts["consultor_intro"])
             
         elif categoria:
             conversa['category'] = categoria
             conversa['stage'] = 'awaiting_message'
+            msg.body(texts["ask_details"])
             
-            msg.body("""Excelente! 🎉
-
-Por favor, nos conte um pouco sobre o que você procura:
-- Modelo preferido
-- Valor que pretende investir
-- Prazo desejado
-- Qualquer outra informação relevante""")
-
         else:
-            msg.body("""Desculpe, não entendi sua resposta. 
-
-Por favor, escolha uma opção:
-
-1️⃣ Carros com 5 assentos
-2️⃣ Carros com 7 assentos
-3️⃣ Carros com 8 assentos
-4️⃣ Falar direto com nosso consultor""")
+            msg.body(texts["invalid_option"])
         
     # Estágio 3: Aguardando mensagem do cliente
     elif stage == 'awaiting_message':
@@ -181,11 +185,7 @@ Por favor, escolha uma opção:
         except Exception as e:
             print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
 
-        msg.body("""Obrigado! Recebemos sua mensagem. 📝
-
-Um de nossos consultores entrará em contato em instantes!
-
-Tenha um ótimo dia! 🚗✨""")
+            msg.body(texts["final_thanks"])
         
         # Manter conversa para histórico (em produção, salve no banco)
         conversa['completed'] = True
@@ -226,7 +226,8 @@ def register_conversation():
             'name': name,
             'city': 'Não informado',
             'stage': 'awaiting_category',
-            'interested': False
+            'interested': False,
+            "language": "es" if country in ["Argentina", "Colombia"] else "pt"
         }
         
         print(f"✅ Conversa registrada: {name} ({phone})")
