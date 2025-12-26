@@ -7,6 +7,9 @@ import time
 import os
 import http.client
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Importar configurações do arquivo config.py
 from config import (
