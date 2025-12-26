@@ -16,7 +16,8 @@ from config import (
     SPREADSHEET_NAME,
     GOOGLE_CREDENTIALS,
     BUSINESS_HOURS,
-    TWILIO_WHATSAPP_TEMPLATE_SID
+    TWILIO_WHATSAPP_TEMPLATE_SID_BR,
+    TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
 )
 
 # =====================================
@@ -87,39 +88,103 @@ def formatar_telefone(telefone):
     
     return f'whatsapp:{telefone}'
 
-def enviar_mensagem_inicial_com_opcoes(telefone, nome):
+def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None):
     try:
+        pais_norm = (pais or "").lower()
+
+        # ===============================
+        # 🇺🇸 USA → EMAIL
+        # ===============================
+        if pais_norm in ["usa", "united states", "estados unidos", "eua"]:
+            if not email_cliente:
+                print(f"⚠️ USA sem email para {nome}, pulando envio")
+                return False, "USA sem email"
+
+            try:
+                msg = EmailMessage()
+                msg["Subject"] = "Allycar | Sua locação em Orlando"
+                msg["From"] = EMAIL_FROM
+                msg["To"] = email_cliente
+
+                msg.set_content(f"""
+Olá {nome},
+
+Aqui é da Allycar 🚗🇺🇸
+
+Recebemos seu interesse em alugar um veículo em Orlando.
+Em breve um consultor entrará em contato com você.
+
+Obrigado!
+""")
+
+                with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                    server.starttls()
+                    server.login(EMAIL_USER, EMAIL_PASSWORD)
+                    server.send_message(msg)
+
+                print(f"✅ Email enviado para {nome} ({email_cliente})")
+                return True, "email"
+
+            except Exception as e:
+                print(f"⚠️ Falha ao enviar email (não bloqueante): {e}")
+                return False, str(e)
+
+        # ===============================
+        # 🇧🇷 BRASIL → TEMPLATE BR
+        # ===============================
+        if pais_norm in ["brazil", "brasil"]:
+            template_sid = TWILIO_WHATSAPP_TEMPLATE_SID_BR
+
+        # ===============================
+        # 🇦🇷 🇨🇴 AR / CO → TEMPLATE LATAM
+        # ===============================
+        elif pais_norm in ["argentina", "colombia"]:
+            template_sid = TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
+
+        # ===============================
+        # OUTROS → NÃO ENVIA
+        # ===============================
+        else:
+            print(f"⏭️ País não tratado ({pais}) para {nome}")
+            return False, "pais_nao_tratado"
+
+        # ===============================
+        # ENVIO WHATSAPP
+        # ===============================
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
         message = client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=telefone,
-            content_sid=TWILIO_WHATSAPP_TEMPLATE_SID,
+            content_sid=template_sid,
             content_variables=json.dumps({
                 "1": nome
             })
         )
 
-        print(f"✅ Template enviado para {nome}: {message.sid}")
+        print(f"✅ WhatsApp enviado para {nome} ({pais}): {message.sid}")
 
-        # registra conversa
-        import requests, os
-        webhook_url = os.getenv(
-            "WEBHOOK_URL",
-            "https://allycar-whatsapp-production.up.railway.app"
-        )
-
-        requests.post(
-            f"{webhook_url}/register_conversation",
-            json={"phone": telefone, "name": nome},
-            timeout=2
-        )
+        # registra conversa no webhook (não bloqueante)
+        try:
+            import requests, os
+            webhook_url = os.getenv(
+                "WEBHOOK_URL",
+                "https://allycar-whatsapp-production.up.railway.app"
+            )
+            requests.post(
+                f"{webhook_url}/register_conversation",
+                json={"phone": telefone, "name": nome},
+                timeout=2
+            )
+        except Exception as e:
+            print(f"⚠️ Falha ao registrar conversa: {e}")
 
         return True, message.sid
 
     except Exception as e:
-        print(f"❌ Erro ao enviar para {nome}: {e}")
+        print(f"❌ Erro geral no envio para {nome}: {e}")
         return False, str(e)
+
 
 def cliente_ja_tem_reserva(telefone):
     """
@@ -179,6 +244,7 @@ def processar_leads():
         telefone = lead.get('TELEFONE', '')
         pais = lead.get('PAIS', 'Brazil')
         status = lead.get('STATUS', '')
+        email_cliente = lead.get('EMAIL', '')
         
         # Debug
         print(f"\n📋 Processando linha {idx}: {nome}")
@@ -190,11 +256,6 @@ def processar_leads():
             continue
 
         pais_normalizado = pais.strip().lower()
-        
-        if pais_normalizado not in ['brazil', 'brasil']:
-            print(f"⏭️  Pulando {nome} - país não permitido ({pais})")
-            pulados += 1
-            continue
         
         # Verifica horário comercial
         if not esta_no_horario_comercial(pais):
@@ -223,7 +284,9 @@ def processar_leads():
         print(f"📤 Enviando mensagem para {nome} ({telefone_formatado})...")
         sucesso, resultado = enviar_mensagem_inicial_com_opcoes(
             telefone_formatado, 
-            nome 
+            nome,
+            pais_normalizado,
+            email_cliente
         )
         
         if sucesso:
