@@ -149,7 +149,7 @@ Por favor, escolha uma opção:
             'timestamp': conversa['timestamp']
         }
         
-        notificar_email_comercial(lead_info)
+        # notificar_email_comercial(lead_info)
         
         msg.body("""Obrigado! Recebemos sua mensagem. 📝
 
