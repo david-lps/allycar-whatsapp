@@ -113,14 +113,31 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                 msg["To"] = email_cliente
 
                 msg.set_content(f"""
-Olá {nome},
+Hello {name},
 
-Aqui é da Allycar 🚗🇺🇸
+This is Allycar — Premium Car Rental in Orlando.
 
-Recebemos seu interesse em alugar um veículo em Orlando.
-Em breve um consultor entrará em contato com você.
+We noticed your interest in renting a vehicle with us and would be happy to help you complete your reservation.
 
-Obrigado!
+To assist you as quickly and accurately as possible, please reply to this email with the following information:
+
+Preferred vehicle type (number of seats or model, if any)
+
+Rental start and end dates
+
+Number of passengers
+
+Pickup and drop-off location (airport or other)
+
+Any special requests or additional details
+
+Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.
+
+We look forward to helping you secure the perfect vehicle for your trip to Orlando.
+
+Best regards,
+Allycar Team
+Premium Car Rental | Orlando, FL
 """)
 
                 with smtplib.SMTP("smtp.gmail.com", 587) as server:
