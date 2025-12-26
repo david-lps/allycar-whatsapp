@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from main import conectar_google_sheets
 import os
 
 load_dotenv()
@@ -31,20 +32,26 @@ import os
 
 def registrar_lead_qualificado(lead_info):
 
-    from main import conectar_google_sheets
-    
     try:
-        sheet = conectar_google_sheets() 
-        sheet.append_row([
+        sheet = conectar_google_sheets()
+        
+        # Abre a aba correta
+        worksheet = sheet.spreadsheet.worksheet("Leads_Qualificados")
+
+        worksheet.append_row([
+            lead_info["timestamp"],
             lead_info["name"],
             lead_info["phone"],
             lead_info["category"],
-            lead_info["message"],
-            lead_info["timestamp"]
+            lead_info["message"]
         ])
+
         print("✅ Lead qualificado salvo na planilha")
+        return True
+
     except Exception as e:
-        print(f"⚠️ Falha ao salvar lead na planilha: {e}")
+        print(f"⚠️ Erro ao salvar lead qualificado: {e}")
+        return False
 
 def notificar_email_comercial(lead_info):
 # NAO ESTA SENDO USADO NO MOMENTO 
