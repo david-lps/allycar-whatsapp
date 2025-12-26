@@ -2,6 +2,9 @@ from flask import Flask, request
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 
 load_dotenv()
@@ -13,6 +16,9 @@ TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER')
 COMMERCIAL_WHATSAPP = os.getenv('COMMERCIAL_WHATSAPP')  # WhatsApp comercial
+EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL_TO = os.getenv("EMAIL_TO")
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
@@ -20,28 +26,39 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 conversations = {}
 
 def notificar_whatsapp_comercial(lead_info):
-    """Notifica WhatsApp comercial sobre lead interessado"""
-    mensagem = f"""🚨 *NOVO LEAD INTERESSADO!*
+    """Notifica o comercial por EMAIL"""
 
-👤 Nome: {lead_info['name']}
-📱 Telefone: {lead_info['phone']}
-🚗 Interesse: {lead_info['category']}
+    assunto = "🚨 Novo Lead Allycar"
+    corpo = f"""
+Novo lead interessado 🚗
 
-💬 Mensagem do cliente:
-"{lead_info['message']}"
+Nome: {lead_info['name']}
+Telefone: {lead_info['phone']}
+Interesse: {lead_info['category']}
 
-👉 Entre em contato agora!"""
+Mensagem do cliente:
+{lead_info['message']}
+"""
 
     try:
-        message = client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=mensagem,
-            to=f'whatsapp:{COMMERCIAL_WHATSAPP}'
-        )
-        print(f"✅ Notificação enviada para comercial: {message.sid}")
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_USER
+        msg["To"] = EMAIL_TO
+        msg["Subject"] = assunto
+
+        msg.attach(MIMEText(corpo, "plain"))
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+
+        print("✅ Email enviado para o comercial")
         return True
+
     except Exception as e:
-        print(f"❌ Erro ao notificar comercial: {e}")
+        print(f"❌ Erro ao enviar email: {e}")
         return False
 
 
