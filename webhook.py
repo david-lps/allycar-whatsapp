@@ -158,7 +158,7 @@ Por favor, escolha uma opção:
 
 1️⃣ Carros com 5 assentos
 2️⃣ Carros com 7 assentos
-3️⃣ Carros com 9 assentos
+3️⃣ Carros com 8 assentos
 4️⃣ Falar direto com nosso consultor""")
         
     # Estágio 3: Aguardando mensagem do cliente
