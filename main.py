@@ -210,7 +210,7 @@ Premium Car Rental | Orlando, FL
         
         # registra conversa no webhook (não bloqueante)
         try:
-            import requests, os
+            import requests
             webhook_url = os.getenv(
                 "WEBHOOK_URL",
                 "https://allycar-whatsapp-production.up.railway.app"
