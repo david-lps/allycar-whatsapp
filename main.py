@@ -126,27 +126,38 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                         "reply_to": "david@allycar.com",
                         "to": [email_cliente],
                         "subject": "Allycar | Your Vehicle Rental in Orlando",
-                        "text": f"""Hello {nome},
-
-This is Allycar — Premium Car Rental in Orlando.
-
-We noticed your interest in renting a vehicle with us and would be happy to help you complete your reservation.
-
-To assist you as quickly and accurately as possible, please reply to this email with the following information:
-
-- Preferred vehicle type (number of seats or model, if any)
-- Rental start and end dates
-- Number of passengers
-- Pickup and drop-off location (airport or other)
-- Any special requests or additional details
-
-Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.
-
-We look forward to helping you secure the perfect vehicle for your trip to Orlando.
-
-Best regards,
-Allycar Team
-Premium Car Rental | Orlando, FL"""
+                        "html": f"""
+                        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
+                            <p>Hello {nome},</p>
+                            
+                            <p>This is <strong>Allycar</strong> — Premium Car Rental in Orlando.</p>
+                            
+                            <p>We noticed your interest in renting a vehicle with us and would be happy to help you complete your reservation.</p>
+                            
+                            <p>To assist you as quickly and accurately as possible, please reply to this email with the following information:</p>
+                            
+                            <ul>
+                                <li>Preferred vehicle type (number of seats or model, if any)</li>
+                                <li>Rental start and end dates</li>
+                                <li>Number of passengers</li>
+                                <li>Pickup and drop-off location (airport or other)</li>
+                                <li>Any special requests or additional details</li>
+                            </ul>
+                            
+                            <p>Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.</p>
+                            
+                            <p>We look forward to helping you secure the perfect vehicle for your trip to Orlando.</p>
+                            
+                            <br>
+                            <div style="background-color: #006354; padding: 20px; text-align: center; border-radius: 8px;">
+                                <img src="https://allycar.com/assets/allycar.png" alt="Allycar Logo" style="max-width: 180px; display: block; margin: 0 auto 15px;">
+                                <p style="margin: 5px 0; color: #ffffff; font-size: 16px; font-weight: bold;">Allycar Team</p>
+                                <p style="margin: 5px 0; color: #ffffff; font-size: 14px;">Premium Car Rental | Orlando, FL</p>
+                                <p style="margin: 5px 0; color: #ffffff; font-size: 13px;">📞 +1 (407) XXX-XXXX | 📧 seuemail@gmail.com</p>
+                                <p style="margin: 5px 0;"><a href="https://www.allycar.com" style="color: #ffffff; font-size: 13px; text-decoration: none;">🌐 www.allycar.com</a></p>
+                            </div>
+                        </div>
+                        """
                     },
                     timeout=10
                 )
