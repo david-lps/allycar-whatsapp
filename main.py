@@ -123,6 +123,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                     },
                     json={
                         "from": "Allycar <onboarding@resend.dev>",  # Domínio de teste grátis
+                        "reply_to": "david@allycar.com",
                         "to": [email_cliente],
                         "subject": "Allycar | Your Vehicle Rental in Orlando",
                         "text": f"""Hello {nome},
