@@ -192,7 +192,7 @@ def webhook_whatsapp():
         except Exception as e:
             print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
 
-            msg.body(texts["final_thanks"])
+        msg.body(texts["final_thanks"])
         
         # Manter conversa para histórico (em produção, salve no banco)
         conversa['completed'] = True
