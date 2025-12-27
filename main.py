@@ -10,6 +10,7 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.message import EmailMessage
 
 # Importar configurações do arquivo config.py
 from config import (
