@@ -114,7 +114,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                 msg["To"] = email_cliente
 
                 msg.set_content(f"""
-Hello {name},
+Hello {nome},
 
 This is Allycar — Premium Car Rental in Orlando.
 
