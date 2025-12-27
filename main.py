@@ -113,22 +113,18 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
 
             try:
 
-              # Credenciais Gmail API (Service Account)
-                creds_info = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
-                creds = Credentials.from_service_account_info(
-                    creds_info,
-                    scopes=["https://www.googleapis.com/auth/gmail.send"]
-                )
-
-                service = build("gmail", "v1", credentials=creds)
-
-                msg = EmailMessage()
-                msg["To"] = email_cliente
-                msg["From"] = EMAIL_USER
-                msg["Subject"] = "Allycar | Your Vehicle Rental in Orlando"
-                
-                msg.set_content(f"""
-Hello {nome},
+         # RESEND - super simples
+                response = requests.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "from": "Allycar <onboarding@resend.dev>",  # Domínio de teste grátis
+                        "to": [email_cliente],
+                        "subject": "Allycar | Your Vehicle Rental in Orlando",
+                        "text": f"""Hello {nome},
 
 This is Allycar — Premium Car Rental in Orlando.
 
@@ -136,15 +132,11 @@ We noticed your interest in renting a vehicle with us and would be happy to help
 
 To assist you as quickly and accurately as possible, please reply to this email with the following information:
 
-Preferred vehicle type (number of seats or model, if any)
-
-Rental start and end dates
-
-Number of passengers
-
-Pickup and drop-off location (airport or other)
-
-Any special requests or additional details
+- Preferred vehicle type (number of seats or model, if any)
+- Rental start and end dates
+- Number of passengers
+- Pickup and drop-off location (airport or other)
+- Any special requests or additional details
 
 Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.
 
@@ -152,23 +144,20 @@ We look forward to helping you secure the perfect vehicle for your trip to Orlan
 
 Best regards,
 Allycar Team
-Premium Car Rental | Orlando, FL
-""")
-
-                encoded_message = base64.urlsafe_b64encode(
-                    msg.as_bytes()
-                ).decode()
-
-                service.users().messages().send(
-                    userId="me",
-                    body={"raw": encoded_message}
-                ).execute()
-
-                print(f"✅ Email enviado para {nome} ({email_cliente})")
-                return True, "email"
-
+Premium Car Rental | Orlando, FL"""
+                    },
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    print(f"✅ Email enviado para {nome} ({email_cliente})")
+                    return True, "email"
+                else:
+                    print(f"❌ Erro Resend: {response.text}")
+                    return False, response.text
+                    
             except Exception as e:
-                print(f"⚠️ Falha ao enviar email (não bloqueante): {e}")
+                print(f"⚠️ Falha ao enviar email: {e}")
                 return False, str(e)
 
         # ===============================
