@@ -8,6 +8,7 @@ import os
 import http.client
 import json
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
