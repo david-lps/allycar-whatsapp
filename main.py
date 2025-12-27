@@ -10,7 +10,11 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+import base64
 from email.message import EmailMessage
+from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
 
 # Importar configurações do arquivo config.py
 from config import (
@@ -108,11 +112,21 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                 return False, "USA sem email"
 
             try:
-                msg = EmailMessage()
-                msg["Subject"] = "Allycar | Your Vehicle Rental in Orlando"
-                msg["From"] = EMAIL_USER
-                msg["To"] = email_cliente
 
+              # Credenciais Gmail API (Service Account)
+                creds_info = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+                creds = Credentials.from_service_account_info(
+                    creds_info,
+                    scopes=["https://www.googleapis.com/auth/gmail.send"]
+                )
+
+                service = build("gmail", "v1", credentials=creds)
+
+                msg = EmailMessage()
+                msg["To"] = email_cliente
+                msg["From"] = EMAIL_USER
+                msg["Subject"] = "Allycar | Your Vehicle Rental in Orlando"
+                
                 msg.set_content(f"""
 Hello {nome},
 
@@ -141,10 +155,14 @@ Allycar Team
 Premium Car Rental | Orlando, FL
 """)
 
-                with smtplib.SMTP("smtp.gmail.com", 587) as server:
-                    server.starttls()
-                    server.login(EMAIL_USER, EMAIL_PASSWORD)
-                    server.send_message(msg)
+                encoded_message = base64.urlsafe_b64encode(
+                    msg.as_bytes()
+                ).decode()
+
+                service.users().messages().send(
+                    userId="me",
+                    body={"raw": encoded_message}
+                ).execute()
 
                 print(f"✅ Email enviado para {nome} ({email_cliente})")
                 return True, "email"
