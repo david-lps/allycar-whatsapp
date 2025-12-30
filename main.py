@@ -328,6 +328,9 @@ def cliente_ja_tem_reserva(telefone):
     for reserva in reservas_ativas:
         cliente = reserva.get("customer", {})
         telefone_reserva = cliente.get("phone_number", "")
+
+        if not telefone_reserva:
+            continue  # Pula se não tem telefone
         
         # Limpar telefone da reserva
         tel_res_limpo = telefone_reserva.replace("+", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
