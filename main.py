@@ -1,7 +1,7 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.rest import Client
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import time
 import os
@@ -16,6 +16,8 @@ import base64
 from email.message import EmailMessage
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
+
+import urllib.parse
 
 # Importar configurações do arquivo config.py
 from config import (
@@ -235,45 +237,113 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         return False, str(e)
 
 
-def cliente_ja_tem_reserva(telefone):
-    """
-    Consulta a API do HQ para verificar se o telefone já possui reserva
-    Retorna True se encontrar reserva, False se não
-    """
+# Cache em memória
+cache_reservas_ativas = {
+    "data": [],
+    "timestamp": None,
+    "validade_minutos": 15
+}
 
+def buscar_reservas_ativas_com_cache():
+    """Busca apenas reservas ATIVAS (open + rental) com cache"""
+    
+    # Verificar cache
+    if cache_reservas_ativas["timestamp"]:
+        tempo_decorrido = datetime.now() - cache_reservas_ativas["timestamp"]
+        if tempo_decorrido < timedelta(minutes=cache_reservas_ativas["validade_minutos"]):
+            print(f"✅ Usando cache ({len(cache_reservas_ativas['data'])} reservas ativas)")
+            return cache_reservas_ativas["data"]
+    
+    print("🔄 Buscando reservas ativas da API...")
+    
     conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
-
     headers = {
         'Authorization': 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
     }
-
-    conn.request(
-        "GET",
-        "/api-america-miami/car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
-        headers=headers
-    )
-
-    res = conn.getresponse()
-    print("Status HTTP:", res.status)
     
-    data = res.read().decode("utf-8")
-    print("Resposta bruta da API:", data)
-
+    todas_reservas = []
+    
     try:
-        reservas = json.loads(data)
-    except:
-        print("⚠️ Erro ao interpretar resposta do HQ")
-        return False
+        # Buscar cada status separadamente (open, rental)
+        for status in ["open", "rental"]:
+            print(f"   📋 Buscando status: {status}")
+            pagina = 1
+            
+            while pagina <= 20:  # Limite de segurança
+                # Filtro correto conforme documentação
+                filtros = [{"type":"string","column":"status","operator":"equals","value":status}]
+                filtros_json = json.dumps(filtros)
+                filtros_encoded = urllib.parse.quote(filtros_json)
+                
+                endpoint = f"/api-america-miami/car-rental/reservations?page={pagina}&filters={filtros_encoded}"
+                
+                conn.request("GET", endpoint, headers=headers)
+                res = conn.getresponse()
+                data = res.read().decode("utf-8")
+                
+                if res.status != 200:
+                    print(f"      ⚠️ Erro HTTP {res.status}")
+                    break
+                
+                resposta = json.loads(data)
+                reservas = resposta.get("data", [])
+                
+                if not reservas:
+                    print(f"      ✓ Fim das páginas para {status}")
+                    break
+                
+                todas_reservas.extend(reservas)
+                print(f"      Página {pagina}: +{len(reservas)} reservas")
+                
+                pagina += 1
+        
+        # Atualizar cache
+        cache_reservas_ativas["data"] = todas_reservas
+        cache_reservas_ativas["timestamp"] = datetime.now()
+        
+        print(f"✅ Total no cache: {len(todas_reservas)} reservas ativas")
+        return todas_reservas
+        
+    except Exception as e:
+        print(f"❌ Erro ao buscar reservas: {e}")
+        import traceback
+        traceback.print_exc()
+        return cache_reservas_ativas["data"]  # Retorna cache antigo se der erro
 
-    telefone_limpo = telefone.replace("whatsapp:", "").replace("+", "")
-
-    for reserva in reservas.get("data", []):
-        telefone_reserva = str(reserva.get("phone", "")).replace("+", "")
-        if telefone_limpo in telefone_reserva:
-            print(f"⛔ Reserva encontrada para {telefone}")
+def cliente_ja_tem_reserva(telefone):
+    """
+    Verifica se telefone tem reserva ativa (open ou rental)
+    Retorna True se encontrar, False se não
+    """
+    
+    # Limpar telefone para comparação
+    telefone_limpo = telefone.replace("whatsapp:", "").replace("+", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    
+    print(f"\n🔍 Verificando: {telefone}")
+    
+    # Buscar reservas ativas (com cache)
+    reservas_ativas = buscar_reservas_ativas_com_cache()
+    
+    # Filtrar por telefone
+    for reserva in reservas_ativas:
+        cliente = reserva.get("customer", {})
+        telefone_reserva = cliente.get("phone_number", "")
+        
+        # Limpar telefone da reserva
+        tel_res_limpo = telefone_reserva.replace("+", "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        
+        # Comparar (aceita match parcial)
+        if telefone_limpo and tel_res_limpo and (telefone_limpo in tel_res_limpo or tel_res_limpo in telefone_limpo):
+            print(f"⛔ RESERVA ATIVA ENCONTRADA!")
+            print(f"   ID: {reserva.get('id')}")
+            print(f"   Cliente: {cliente.get('label')}")
+            print(f"   Status: {reserva.get('status')}")
+            print(f"   Telefone: {telefone_reserva}")
+            print(f"   Veículo: {reserva.get('vehicle_class', {}).get('name')}")
+            print(f"   Pick-up: {reserva.get('pick_up_date')}")
             return True
-
-    print(f"✅ Nenhuma reserva encontrada para {telefone}")
+    
+    print(f"✅ Nenhuma reserva ativa encontrada para {telefone}")
     return False
 
 def processar_leads():
