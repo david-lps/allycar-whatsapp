@@ -384,7 +384,7 @@ def processar_leads():
         # Valida dados
         if not nome or not telefone:
             print(f"⚠️  Pulando linha {idx} - dados incompletos")
-            sheet.update_cell(idx, 6, 'Error - Incomplete data')
+            sheet.update_cell(idx, 7, 'Error - Incomplete data')
             erros += 1
             continue
 
@@ -394,7 +394,7 @@ def processar_leads():
         # Verificar se já existe reserva no HQ
         if cliente_ja_tem_reserva(telefone_formatado):
             print(f"⏭️ Pulando {nome} - cliente já possui reserva")
-            sheet.update_cell(idx, 5, 'Skipped - Already has reservation')
+            sheet.update_cell(idx, 7, 'Skipped - Already has reservation')
             pulados += 1
             continue
         
