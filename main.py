@@ -241,7 +241,7 @@ def cliente_ja_tem_reserva(telefone):
     Retorna True se encontrar reserva, False se não
     """
 
-    conn = http.client.HTTPSConnection("api.caagcrm.com")
+    conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
 
     headers = {
         'Authorization': 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
@@ -249,7 +249,7 @@ def cliente_ja_tem_reserva(telefone):
 
     conn.request(
         "GET",
-        "/api/car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
+        "/api-america-miami/car-rental/reservations?filter-from-mine-dashboard=null&filters=null",
         headers=headers
     )
 
