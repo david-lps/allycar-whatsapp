@@ -40,19 +40,15 @@ from config import (
 
 def conectar_google_sheets():
     """Conecta ao Google Sheets"""
-    
-    print("🔗 Tentando conectar ao Google Sheets...")
-    
+        
     try:
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
         
         creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_CREDENTIALS, scope)
 
-        print("🔐 Autorizando cliente...")
         client = gspread.authorize(creds)
         
-        print(f"📊 Abrindo planilha: {SPREADSHEET_NAME}")
         sheet = client.open(SPREADSHEET_NAME).sheet1
         
         print("✅ Conectado ao Google Sheets com sucesso!")
@@ -116,7 +112,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
 
             try:
 
-         # RESEND - super simples
+                # RESEND - super simples
                 response = requests.post(
                     "https://api.resend.com/emails",
                     headers={
@@ -266,7 +262,7 @@ def buscar_reservas_ativas_com_cache():
     try:
         # Buscar cada status separadamente (open, rental)
         for status in ["open", "rental"]:
-            print(f"   📋 Buscando status: {status}")
+            
             pagina = 1
             
             while pagina <= 20:  # Limite de segurança
