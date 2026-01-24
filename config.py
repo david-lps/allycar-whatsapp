@@ -18,7 +18,7 @@ GOOGLE_CREDENTIALS = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 
 # Horários comerciais
 BUSINESS_HOURS = {
-    'Brazil': {'start': 9, 'end': 18, 'timezone': 'America/Sao_Paulo'},
+    'Brazil': {'start': 9, 'end': 19, 'timezone': 'America/Sao_Paulo'},
     'Portugal': {'start': 9, 'end': 18, 'timezone': 'Europe/Lisbon'},
     'USA': {'start': 9, 'end': 18, 'timezone': 'America/New_York'},
     'Argentina': {'start': 9, 'end': 18, 'timezone': 'America/Argentina/Buenos_Aires'},
