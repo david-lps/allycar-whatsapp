@@ -345,6 +345,113 @@ def cliente_ja_tem_reserva(telefone):
     print(f"✅ Nenhuma reserva ativa encontrada para {telefone}")
     return False
 
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+def _pick_lang(country: str) -> str:
+    c = _norm(country)
+
+    # PT
+    if c in ["brazil", "brasil"]:
+        return "pt"
+
+    # ES
+    es_countries = {
+        "mexico", "méxico",
+        "colombia", "colômbia",
+        "spain", "espanha", "españa",
+        "argentina",
+        "uruguay", "uruguai",
+        "venezuela",
+        "guatemala"
+    }
+    if c in es_countries:
+        return "es"
+
+    # EN (default)
+    return "en"
+
+def _email_templates(nome: str, lang: str):
+    if lang == "pt":
+        subject = "Allycar | Sua locação em Orlando"
+        html = f"""
+        <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+          <p>Olá {nome},</p>
+          <br>
+          <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+            <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
+            <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+            <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
+          </div>
+        </div>
+        """
+        return subject, html
+
+    if lang == "es":
+        subject = "Allycar | Tu renta de auto en Orlando"
+        html = f"""
+        <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+          <p>Hola {nome},</p>
+          <p>Somos <strong>Allycar</strong> — Renta de Autos Premium en Orlando 🇺🇸🚗</p>
+          <br>
+          <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+            <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
+            <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+            <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
+          </div>
+        </div>
+        """
+        return subject, html
+
+    # EN
+    subject = "Allycar | Your Vehicle Rental in Orlando"
+    html = f"""
+    <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+      <p>Hello {nome},</p>
+      <p>This is <strong>Allycar</strong> — Premium Car Rental in Orlando 🇺🇸🚗</p>
+      <br>
+      <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+        <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
+        <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+        <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
+      </div>
+    </div>
+    """
+    return subject, html
+
+def _resend_send_email(to_email: str, subject: str, html: str):
+    """Envia email via Resend. Retorna (True, 'ok') ou (False, 'erro')."""
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "from": "Allycar <booking@allycar.com>",
+                "reply_to": "david@allycar.com",
+                "to": [to_email],
+                "subject": subject,
+                "html": html
+            },
+            timeout=15
+        )
+        if resp.status_code in (200, 201):
+            return True, "ok"
+        return False, resp.text
+    except Exception as e:
+        return False, str(e)
+
+def _find_col_idx(headers, candidates):
+    """Acha coluna pelo nome do header (case-insensitive). Retorna índice 1-based."""
+    headers_norm = [_norm(h) for h in headers]
+    for c in candidates:
+        c_norm = _norm(c)
+        if c_norm in headers_norm:
+            return headers_norm.index(c_norm) + 1
+    return None
+
 def processar_leads():
     """Processa leads da planilha e envia mensagens com opções interativas"""
     print("🚀 Iniciando processamento de leads...\n")
@@ -356,6 +463,10 @@ def processar_leads():
     enviados = 0
     erros = 0
     pulados = 0
+
+    # =====================================
+    # PRIMEIRO FOR: PROCESSAR LEADS B2C 
+    # =====================================
     
     for idx, lead in enumerate(leads, start=2):  # Começa em 2 (linha 1 é cabeçalho)
         nome = lead.get('NOME', '')
@@ -420,10 +531,79 @@ def processar_leads():
         
         # Delay entre mensagens (respeitar limites Twilio)
         time.sleep(2)
+
+
+    # =====================================
+    # SEGUNDO FOR: PROCESSAR LEADS B2B (EMAIL)
+    # =====================================
+    try:
+        ws_b2b = sheet.spreadsheet.worksheet("Leads_B2B")
+        headers = ws_b2b.row_values(1)
+
+        col_status = _find_col_idx(headers, ["STATUS", "Status"])
+        col_email  = _find_col_idx(headers, ["E-mail", "Email", "EMAIL"])
+        col_country = _find_col_idx(headers, ["Country", "PAIS", "Pais", "País"])
+        col_nome = _find_col_idx(headers, ["NOME", "Nome", "NAME", "Name"])
+        col_ts = _find_col_idx(headers, ["TIMESTAMP", "Timestamp", "DATA_ENVIO", "Data Envio"])
+
+        if not col_status or not col_email or not col_country:
+            print("❌ Leads_B2B: faltam colunas obrigatórias (STATUS, E-mail/EMAIL, Country/PAIS).")
+        else:
+            b2b_rows = ws_b2b.get_all_values()  # inclui header
+            enviados_b2b = 0
+            pulados_b2b = 0
+            erros_b2b = 0
+
+            for r_idx in range(2, len(b2b_rows) + 1):  # linhas 2..N
+                row = b2b_rows[r_idx - 1]
+
+                status_val = row[col_status - 1] if len(row) >= col_status else ""
+                if _norm(status_val) != "":
+                    pulados_b2b += 1
+                    continue
+
+                email_cliente = row[col_email - 1] if len(row) >= col_email else ""
+                country = row[col_country - 1] if len(row) >= col_country else ""
+                nome_b2b = row[col_nome - 1] if (col_nome and len(row) >= col_nome) else "there"
+
+                if _norm(email_cliente) == "":
+                    print(f"⚠️ Leads_B2B linha {r_idx}: sem email, pulando")
+                    ws_b2b.update_cell(r_idx, col_status, "Error - Missing email")
+                    erros_b2b += 1
+                    continue
+
+                lang = _pick_lang(country)
+                subject, html = _email_templates(nome_b2b, lang)
+
+                print(f"📧 (B2B) Enviando email para {nome_b2b} <{email_cliente}> | {country} | {lang} ...")
+                ok, info = _resend_send_email(email_cliente, subject, html)
+
+                if ok:
+                    ws_b2b.update_cell(r_idx, col_status, "Sent")
+                    if col_ts:
+                        ws_b2b.update_cell(r_idx, col_ts, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                    enviados_b2b += 1
+                    print("✅ (B2B) Email enviado")
+                else:
+                    ws_b2b.update_cell(r_idx, col_status, f"Error: {info[:120]}")
+                    erros_b2b += 1
+                    print(f"❌ (B2B) Falha: {info}")
+
+                time.sleep(1)
+
+            print("\n" + "-"*60)
+            print("📊 RELATÓRIO B2B")
+            print("-"*60)
+            print(f"✅ Emails enviados: {enviados_b2b}")
+            print(f"❌ Erros: {erros_b2b}")
+            print(f"⏭️ Pulados (já tinham status): {pulados_b2b}")
+            print("-"*60)
+
+    except Exception as e:
+        print(f"❌ Erro ao processar Leads_B2B: {e}")
     
-    # Relatório final
     print("\n" + "="*60)
-    print("📊 RELATÓRIO FINAL")
+    print("📊 RELATÓRIO B2C")
     print("="*60)
     print(f"✅ Mensagens enviadas: {enviados}")
     print(f"❌ Erros: {erros}")
