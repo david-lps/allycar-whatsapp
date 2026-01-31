@@ -39,8 +39,6 @@ def registrar_lead_qualificado(lead_info):
     # =====================================
     try:
         sheet = conectar_google_sheets()
-        
-        # Abre a aba correta
         worksheet = sheet.spreadsheet.worksheet("Leads_Qualificados")
 
         worksheet.append_row([
@@ -52,23 +50,22 @@ def registrar_lead_qualificado(lead_info):
         ])
 
         print("✅ Lead qualificado salvo na planilha")
-        return True
 
     except Exception as e:
         print(f"⚠️ Erro ao salvar lead qualificado: {e}")
-        return False
+        return False  # aqui sim faz sentido parar, pq não salvou
 
     # =====================================
     # ALERTA LEAD QUALIFICADO POR EMAIL
     # =====================================
     try:
-            destinatarios = [
-                "booking@allycar.com",
-                "david@allycar.com",
-                "higor@allycar.com"
-            ]
+        destinatarios = [
+            "booking@allycar.com",
+            "david@allycar.com",
+            "higor@allycar.com"
+        ]
 
-            conteudo = f"""Novo lead qualificado (WhatsApp)
+        conteudo = f"""Novo lead qualificado (WhatsApp)
 
 Data/Hora: {lead_info["timestamp"]}
 Nome: {lead_info["name"]}
@@ -79,31 +76,31 @@ Mensagem:
 {lead_info["message"]}
 """
 
-            response = requests.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "from": "Allycar <booking@allycar.com>",
-                    "to": destinatarios,
-                    "subject": f"🚨 Lead qualificado Allycar: {lead_info['name']}",
-                    "text": conteudo
-                },
-                timeout=10
-            )
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "from": "Allycar <booking@allycar.com>",
+                "to": destinatarios,
+                "subject": f"🚨 Lead qualificado Allycar: {lead_info['name']}",
+                "text": conteudo
+            },
+            timeout=10
+        )
 
-            if response.status_code in (200, 201):
-                print("✅ Alerta enviado por email (Resend)")
-                return True
-            else:
-                print(f"⚠️ Falha ao enviar email (Resend): {response.status_code} - {response.text}")
-                return False
+        if response.status_code in (200, 201):
+            print("✅ Alerta enviado por email (Resend)")
+        else:
+            print(f"⚠️ Falha ao enviar email (Resend): {response.status_code} - {response.text}")
 
     except Exception as e:
-            print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
-            return False
+        print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
+
+    # Se chegou aqui, salvou na planilha. Email é best-effort.
+    return True
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
