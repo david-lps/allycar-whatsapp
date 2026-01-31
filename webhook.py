@@ -96,13 +96,14 @@ Mensagem:
 
             if response.status_code in (200, 201):
                 print("✅ Alerta enviado por email (Resend)")
+                return True
             else:
                 print(f"⚠️ Falha ao enviar email (Resend): {response.status_code} - {response.text}")
+                return False
 
     except Exception as e:
             print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
-
-    return True
+            return False
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
