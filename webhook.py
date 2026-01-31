@@ -59,7 +59,7 @@ def registrar_lead_qualificado(lead_info):
         return False
 
     # =====================================
-    # ALERTA POR EMAIL (não bloqueante)
+    # ALERTA LEAD QUALIFICADO POR EMAIL
     # =====================================
     try:
             destinatarios = [
