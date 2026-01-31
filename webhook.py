@@ -59,24 +59,25 @@ def registrar_lead_qualificado(lead_info):
         return False
 
     # =====================================
-    # ALERTA POR EMAIL LEAD QUALIFICADO
+    # ALERTA POR EMAIL (não bloqueante)
     # =====================================
     try:
-        destinatarios = [
-            "booking@allycar.com",
-            "david@allycar.com",
-            "higor@allycar.com"
-        ]
-        
-        conteudo = f"""Novo lead qualificado (WhatsApp)
-            Data/Hora: {lead_info["timestamp"]}
-            Nome: {lead_info["name"]}
-            Telefone: {lead_info["phone"]}
-            Interesse: {lead_info["category"]}
+            destinatarios = [
+                "booking@allycar.com",
+                "david@allycar.com",
+                "higor@allycar.com"
+            ]
 
-        Mensagem:
-            {lead_info["message"]}
-            """
+            conteudo = f"""Novo lead qualificado (WhatsApp)
+
+Data/Hora: {lead_info["timestamp"]}
+Nome: {lead_info["name"]}
+Telefone: {lead_info["phone"]}
+Interesse: {lead_info["category"]}
+
+Mensagem:
+{lead_info["message"]}
+"""
 
             response = requests.post(
                 "https://api.resend.com/emails",
@@ -99,7 +100,9 @@ def registrar_lead_qualificado(lead_info):
                 print(f"⚠️ Falha ao enviar email (Resend): {response.status_code} - {response.text}")
 
     except Exception as e:
-        print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
+            print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
+
+    return True
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
