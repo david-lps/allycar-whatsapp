@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from main import conectar_google_sheets
 from datetime import datetime
 import os
+import requests
 
 load_dotenv()
 
@@ -33,6 +34,9 @@ import os
 
 def registrar_lead_qualificado(lead_info):
 
+    # =====================================
+    # REGISTRO LEAD QUALIFICADO PLANILHA
+    # =====================================
     try:
         sheet = conectar_google_sheets()
         
@@ -53,6 +57,49 @@ def registrar_lead_qualificado(lead_info):
     except Exception as e:
         print(f"⚠️ Erro ao salvar lead qualificado: {e}")
         return False
+
+    # =====================================
+    # ALERTA POR EMAIL LEAD QUALIFICADO
+    # =====================================
+    try:
+        destinatarios = [
+            "booking@allycar.com",
+            "david@allycar.com",
+            "higor@allycar.com"
+        ]
+        
+        conteudo = f"""Novo lead qualificado (WhatsApp)
+            Data/Hora: {lead_info["timestamp"]}
+            Nome: {lead_info["name"]}
+            Telefone: {lead_info["phone"]}
+            Interesse: {lead_info["category"]}
+
+        Mensagem:
+            {lead_info["message"]}
+            """
+
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "from": "Allycar <booking@allycar.com>",
+                    "to": destinatarios,
+                    "subject": f"🚨 Lead qualificado Allycar: {lead_info['name']}",
+                    "text": conteudo
+                },
+                timeout=10
+            )
+
+            if response.status_code in (200, 201):
+                print("✅ Alerta enviado por email (Resend)")
+            else:
+                print(f"⚠️ Falha ao enviar email (Resend): {response.status_code} - {response.text}")
+
+    except Exception as e:
+        print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
