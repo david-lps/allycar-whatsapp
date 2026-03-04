@@ -180,7 +180,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         # ===============================
         # 🇦🇷 🇨🇴 AR / CO → TEMPLATE LATAM
         # ===============================
-        elif pais_norm in ["argentina", "colombia"]:
+        elif pais_norm in ["argentina", "colombia", "mexico"]:
             template_sid = TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
 
         # ===============================
