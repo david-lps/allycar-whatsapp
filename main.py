@@ -206,7 +206,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
 
         print(f"✅ WhatsApp enviado para {nome} ({pais}): {message.sid}")
 
-        language = "es" if pais_norm in ["argentina", "colombia"] else "pt"
+        language = "es" if pais_norm in ["argentina", "colombia", "mexico"] else "pt"
         
         # registra conversa no webhook (não bloqueante)
         try:
