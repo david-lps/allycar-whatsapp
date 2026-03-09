@@ -203,7 +203,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                     sms = twilio_client.messages.create(
                         body=sms_body,
                         from_=os.getenv("TWILIO_PHONE_NUMBER"),
-                        to=telefone
+                        to=telefone.replace("whatsapp:", "").strip()
                     )
         
                     sms_ok = True
