@@ -107,71 +107,81 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         # 🇺🇸 USA → EMAIL
         # ===============================
         if pais_norm in ["usa", "united states", "estados unidos", "eua"]:
-            if not email_cliente:
-                print(f"⚠️ USA sem email para {nome}, pulando envio")
-                return False, "USA sem email"
-
-            try:
-
-                # RESEND - super simples
-                response = requests.post(
-                    "https://api.resend.com/emails",
-                    headers={
-                        "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "from": "Allycar <booking@allycar.com>",  # Domínio de teste grátis
-                        "reply_to": "david@allycar.com",
-                        "to": [email_cliente],
-                        "subject": "Allycar | Your Vehicle Rental in Orlando",
-                        "html": f"""
-                        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
-                            <p>Hello {nome},</p>
-                            
-                            <p>This is <strong>Allycar</strong> — Premium Car Rental in Orlando.</p>
-                            
-                            <p>We noticed your interest in renting a vehicle with us and would be happy to help you complete your reservation.</p>
-                            
-                            <p>To assist you as quickly and accurately as possible, please reply to this email with the following information:</p>
-                            
-                            <ul>
-                                <li>Preferred vehicle type (number of seats or model, if any)</li>
-                                <li>Rental start and end dates</li>
-                                <li>Number of passengers</li>
-                                <li>Pickup and drop-off location (airport or other)</li>
-                                <li>Any special requests or additional details</li>
-                            </ul>
-                            
-                            <p>Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.</p>
-                            
-                            <p>We look forward to helping you secure the perfect vehicle for your trip to Orlando.</p>
-                            
-                            <br>
-                            <div style="background-color: #006354; padding: 20px; text-align: center; border-radius: 8px;">
-                                <img src="https://allycar.com/assets/allycar.png" alt="Allycar Logo" style="max-width: 180px; display: block; margin: 0 auto 15px;">
-                                <p style="margin: 5px 0; color: #ffffff; font-size: 16px; font-weight: bold;">Allycar Team</p>
-                                <p style="margin: 5px 0; color: #ffffff; font-size: 14px;">Premium Car Rental | Orlando, FL</p>
-                                <p style="margin: 5px 0; color: #ffffff; font-size: 13px;">📞 +1 (407) 712-0270 | 📧 booking@allycar.com</p>
-                                <p style="margin: 5px 0;"><a href="https://www.allycar.com" style="color: #ffffff; font-size: 13px; text-decoration: none;">🌐 www.allycar.com</a></p>
+            if not email_cliente and not telefone_cliente:
+                print(f"⚠️ USA sem email e sem telefone para {nome}, pulando envio")
+                return False, "USA sem email e sem telefone"
+        
+            email_ok = False
+            sms_ok = False
+            erros = []
+        
+            # =========================
+            # 1) ENVIO DE EMAIL
+            # =========================
+            if email_cliente:
+                try:
+                    response = requests.post(
+                        "https://api.resend.com/emails",
+                        headers={
+                            "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "from": "Allycar <booking@allycar.com>",
+                            "reply_to": "david@allycar.com",
+                            "to": [email_cliente],
+                            "subject": "Allycar | Your Vehicle Rental in Orlando",
+                            "html": f"""
+                            <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
+                                <p>Hello {nome},</p>
+                                
+                                <p>This is <strong>Allycar</strong> — Premium Car Rental in Orlando.</p>
+                                
+                                <p>We noticed your interest in renting a vehicle with us and would be happy to help you complete your reservation.</p>
+                                
+                                <p>To assist you as quickly and accurately as possible, please reply to this email with the following information:</p>
+                                
+                                <ul>
+                                    <li>Preferred vehicle type (number of seats or model, if any)</li>
+                                    <li>Rental start and end dates</li>
+                                    <li>Number of passengers</li>
+                                    <li>Pickup and drop-off location (airport or other)</li>
+                                    <li>Any special requests or additional details</li>
+                                </ul>
+                                
+                                <p>Once we receive your response, one of our specialists will review your needs and get back to you promptly with the best options available.</p>
+                                
+                                <p>We look forward to helping you secure the perfect vehicle for your trip to Orlando.</p>
+                                
+                                <br>
+                                <div style="background-color: #006354; padding: 20px; text-align: center; border-radius: 8px;">
+                                    <img src="https://allycar.com/assets/allycar.png" alt="Allycar Logo" style="max-width: 180px; display: block; margin: 0 auto 15px;">
+                                    <p style="margin: 5px 0; color: #ffffff; font-size: 16px; font-weight: bold;">Allycar Team</p>
+                                    <p style="margin: 5px 0; color: #ffffff; font-size: 14px;">Premium Car Rental | Orlando, FL</p>
+                                    <p style="margin: 5px 0; color: #ffffff; font-size: 13px;">📞 +1 (407) 712-0270 | 📧 booking@allycar.com</p>
+                                    <p style="margin: 5px 0;"><a href="https://www.allycar.com" style="color: #ffffff; font-size: 13px; text-decoration: none;">🌐 www.allycar.com</a></p>
+                                </div>
                             </div>
-                        </div>
-                        """
-                    },
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    print(f"✅ Email enviado para {nome} ({email_cliente})")
-                    return True, "email"
-                else:
-                    print(f"❌ Erro Resend: {response.text}")
-                    return False, response.text
-                    
-            except Exception as e:
-                print(f"⚠️ Falha ao enviar email: {e}")
-                return False, str(e)
-
+                            """
+                        },
+                        timeout=10
+                    )
+        
+                    if response.status_code in [200, 201]:
+                        email_ok = True
+                        print(f"✅ Email enviado para {nome} ({email_cliente})")
+                    else:
+                        erro_email = f"Erro Resend: {response.text}"
+                        erros.append(erro_email)
+                        print(f"❌ {erro_email}")
+        
+                except Exception as e:
+                    erro_email = f"Falha ao enviar email: {e}"
+                    erros.append(erro_email)
+                    print(f"⚠️ {erro_email}")
+            else:
+                print(f"ℹ️ Sem email para {nome}, pulando envio de email")
+        
             # =========================
             # 2) ENVIO DE SMS
             # =========================
@@ -205,6 +215,18 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                     print(f"⚠️ {erro_sms}")
             else:
                 print(f"ℹ️ Sem telefone para {nome}, pulando envio de SMS")
+        
+            # =========================
+            # 3) RETORNO FINAL
+            # =========================
+            if email_ok and sms_ok:
+                return True, "email+sms"
+            elif email_ok:
+                return True, "email"
+            elif sms_ok:
+                return True, "sms"
+            else:
+                return False, " | ".join(erros) if erros else "nenhum envio realizado"
         
         # ===============================
         # 🇧🇷 BRASIL → TEMPLATE BR
