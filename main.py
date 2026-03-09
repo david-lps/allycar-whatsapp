@@ -207,7 +207,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                     )
         
                     sms_ok = True
-                    print(f"✅ SMS enviado para {nome} ({telefone_cliente}) | SID: {sms.sid}")
+                    print(f"✅ SMS enviado para {nome} ({telefone}) | SID: {sms.sid}")
         
                 except Exception as e:
                     erro_sms = f"Falha ao enviar SMS: {e}"
