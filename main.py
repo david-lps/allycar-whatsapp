@@ -24,6 +24,7 @@ from config import (
     TWILIO_ACCOUNT_SID,
     TWILIO_AUTH_TOKEN,
     TWILIO_WHATSAPP_NUMBER,
+    TWILIO_PHONE_NUMBER,
     SPREADSHEET_NAME,
     GOOGLE_CREDENTIALS,
     BUSINESS_HOURS,
@@ -171,6 +172,40 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
                 print(f"⚠️ Falha ao enviar email: {e}")
                 return False, str(e)
 
+            # =========================
+            # 2) ENVIO DE SMS
+            # =========================
+            if telefone:
+                try:
+                    twilio_client = Client(
+                        os.getenv("TWILIO_ACCOUNT_SID"),
+                        os.getenv("TWILIO_AUTH_TOKEN")
+                    )
+        
+                    sms_body = (
+                        f"Hello {nome}, this is Allycar in Orlando. "
+                        f"We noticed your interest in renting a vehicle with us. "
+                        f"Please reply with: vehicle type/model, rental dates, number of passengers, "
+                        f"pickup/drop-off location, and any special requests. "
+                        f"More info: https://allycar.com"
+                    )
+        
+                    sms = twilio_client.messages.create(
+                        body=sms_body,
+                        from_=os.getenv("TWILIO_PHONE_NUMBER"),
+                        to=telefone_cliente
+                    )
+        
+                    sms_ok = True
+                    print(f"✅ SMS enviado para {nome} ({telefone_cliente}) | SID: {sms.sid}")
+        
+                except Exception as e:
+                    erro_sms = f"Falha ao enviar SMS: {e}"
+                    erros.append(erro_sms)
+                    print(f"⚠️ {erro_sms}")
+            else:
+                print(f"ℹ️ Sem telefone para {nome}, pulando envio de SMS")
+        
         # ===============================
         # 🇧🇷 BRASIL → TEMPLATE BR
         # ===============================
