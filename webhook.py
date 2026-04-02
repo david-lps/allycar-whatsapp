@@ -329,7 +329,7 @@ def capturar_lead_home():
         lang  = (data.get('lang')  or 'pt').strip().lower()
 
         if lang not in ('pt', 'en', 'es'):
-            lang = 'pt'  # fallback seguro
+            lang = 'pt'
 
         if not name or not email:
             return {'status': 'error', 'message': 'Nome e email são obrigatórios'}, 400
@@ -338,6 +338,7 @@ def capturar_lead_home():
 
         subject, html = _lead_coupon_email(name, lang)
 
+        # 1) ENVIA E-MAIL COM CUPOM
         resp = requests.post(
             'https://api.resend.com/emails',
             headers={
@@ -354,14 +355,32 @@ def capturar_lead_home():
             timeout=10
         )
 
-        status = 200 if resp.status_code in (200, 201) else 500
-        if status == 200:
+        email_ok = resp.status_code in (200, 201)
+
+        if email_ok:
             print(f"✅ Cupom enviado para {name} <{email}> em [{lang}]")
         else:
             print(f"❌ Erro Resend: {resp.text}")
 
+        # 2) REGISTRA NA PLANILHA (independente do e-mail — best effort)
+        try:
+            sheet = conectar_google_sheets()
+            worksheet = sheet.spreadsheet.worksheet("Current MQLs")
+            worksheet.append_row([
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                name,
+                email,
+                '----',
+                lang,
+                'Cadastro Site',
+            ])
+            print(f"✅ Lead registrado na planilha: {name} <{email}>")
+        except Exception as e:
+            print(f"⚠️ Falha ao registrar na planilha (ignorado): {e}")
+
+        status = 200 if email_ok else 500
         response = app.response_class(
-            response=f'{{"status":"{"success" if status==200 else "error"}"}}',
+            response=f'{{"status":"{"success" if email_ok else "error"}"}}',
             status=status,
             mimetype='application/json'
         )
@@ -376,7 +395,6 @@ def capturar_lead_home():
 
     response.headers['Access-Control-Allow-Origin'] = 'https://www.allycar.com'
     return response
-
 
 def _lead_coupon_email(name: str, lang: str):
     """Retorna (subject, html) do e-mail do cupom no idioma correto."""
