@@ -314,9 +314,7 @@ def health():
 
 @app.route('/api/leads', methods=['POST', 'OPTIONS'])
 def capturar_lead_home():
-    """Recebe lead do formulário da home e envia e-mail com cupom via Resend"""
 
-    # CORS — permite chamada do site
     if request.method == 'OPTIONS':
         response = app.make_default_options_response()
         response.headers['Access-Control-Allow-Origin'] = 'https://www.allycar.com'
@@ -325,16 +323,21 @@ def capturar_lead_home():
         return response
 
     try:
-        data = request.get_json()
-        name  = (data.get('name') or '').strip()
+        data  = request.get_json()
+        name  = (data.get('name')  or '').strip()
         email = (data.get('email') or '').strip()
+        lang  = (data.get('lang')  or 'pt').strip().lower()
+
+        if lang not in ('pt', 'en', 'es'):
+            lang = 'pt'  # fallback seguro
 
         if not name or not email:
             return {'status': 'error', 'message': 'Nome e email são obrigatórios'}, 400
 
-        print(f"📥 Novo lead da home: {name} <{email}>")
+        print(f"📥 Novo lead da home: {name} <{email}> | lang={lang}")
 
-        # Envia e-mail com cupom via Resend
+        subject, html = _lead_coupon_email(name, lang)
+
         resp = requests.post(
             'https://api.resend.com/emails',
             headers={
@@ -345,61 +348,23 @@ def capturar_lead_home():
                 'from': 'Allycar <booking@allycar.com>',
                 'reply_to': 'david@allycar.com',
                 'to': [email],
-                'subject': 'Allycar | Seu cupom de 5% de desconto 🎉',
-                'html': f"""
-                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
-
-                    <p>Olá, {name}!</p>
-
-                    <p>Que ótimo ter você aqui! Aqui está o seu cupom de boas-vindas:</p>
-
-                    <div style="background-color: #f9f5e8; border: 2px dashed #c9a84c; border-radius: 10px; padding: 24px; text-align: center; margin: 28px 0;">
-                        <p style="margin: 0 0 6px; font-size: 14px; color: #888; letter-spacing: 0.05em; text-transform: uppercase;">Seu cupom exclusivo</p>
-                        <p style="margin: 0 0 8px; font-size: 36px; font-weight: bold; letter-spacing: 4px; color: #0a1628;">MYFIRSTBOOKING</p>
-                        <p style="margin: 0; font-size: 15px; color: #c9a84c; font-weight: bold;">5% de desconto na sua primeira reserva</p>
-                    </div>
-
-                    <p>Para usar o cupom, basta:</p>
-                    <ol>
-                        <li>Acesse <a href="https://www.allycar.com" style="color: #c9a84c;">www.allycar.com</a></li>
-                        <li>Escolha o veículo e as datas da sua viagem</li>
-                        <li>Digite o código <strong>MYFIRSTBOOKING</strong> no campo de cupom</li>
-                        <li>O desconto de 5% será aplicado automaticamente</li>
-                    </ol>
-
-                    <p>Qualquer dúvida, é só responder este e-mail — nossa equipe fala português e está pronta para te ajudar.</p>
-
-                    <p>Até breve em Orlando! 🌴</p>
-
-                    <br>
-                    <div style="background-color: #006354; padding: 20px; text-align: center; border-radius: 8px;">
-                        <img src="https://allycar.com/assets/allycar.png" alt="Allycar Logo" style="max-width: 180px; display: block; margin: 0 auto 15px;">
-                        <p style="margin: 5px 0; color: #ffffff; font-size: 16px; font-weight: bold;">Allycar Team</p>
-                        <p style="margin: 5px 0; color: #ffffff; font-size: 14px;">Premium Car Rental | Orlando, FL</p>
-                        <p style="margin: 5px 0; color: #ffffff; font-size: 13px;">📞 +1 (407) 712-0270 | 📧 booking@allycar.com</p>
-                        <p style="margin: 5px 0;"><a href="https://www.allycar.com" style="color: #ffffff; font-size: 13px; text-decoration: none;">🌐 www.allycar.com</a></p>
-                    </div>
-
-                </div>
-                """
+                'subject': subject,
+                'html': html
             },
             timeout=10
         )
 
-        if resp.status_code in (200, 201):
-            print(f"✅ Cupom enviado para {name} <{email}>")
-            response = app.response_class(
-                response='{"status":"success"}',
-                status=200,
-                mimetype='application/json'
-            )
+        status = 200 if resp.status_code in (200, 201) else 500
+        if status == 200:
+            print(f"✅ Cupom enviado para {name} <{email}> em [{lang}]")
         else:
             print(f"❌ Erro Resend: {resp.text}")
-            response = app.response_class(
-                response='{"status":"error"}',
-                status=500,
-                mimetype='application/json'
-            )
+
+        response = app.response_class(
+            response=f'{{"status":"{"success" if status==200 else "error"}"}}',
+            status=status,
+            mimetype='application/json'
+        )
 
     except Exception as e:
         print(f"⚠️ Erro no endpoint /api/leads: {e}")
@@ -411,6 +376,100 @@ def capturar_lead_home():
 
     response.headers['Access-Control-Allow-Origin'] = 'https://www.allycar.com'
     return response
+
+
+def _lead_coupon_email(name: str, lang: str):
+    """Retorna (subject, html) do e-mail do cupom no idioma correto."""
+
+    FOOTER = f"""
+        <br>
+        <div style="background-color:#006354;padding:20px;text-align:center;border-radius:8px;">
+            <img src="https://allycar.com/assets/allycar.png" alt="Allycar" style="max-width:180px;display:block;margin:0 auto 15px;">
+            <p style="margin:5px 0;color:#fff;font-size:16px;font-weight:bold;">Allycar Team</p>
+            <p style="margin:5px 0;color:#fff;font-size:14px;">Premium Car Rental | Orlando, FL</p>
+            <p style="margin:5px 0;color:#fff;font-size:13px;">📞 +1 (407) 712-0270 | 📧 booking@allycar.com</p>
+            <p style="margin:5px 0;"><a href="https://www.allycar.com" style="color:#fff;font-size:13px;text-decoration:none;">🌐 www.allycar.com</a></p>
+        </div>
+    """
+
+    COUPON_BLOCK = """
+        <div style="background-color:#f9f5e8;border:2px dashed #c9a84c;border-radius:10px;padding:24px;text-align:center;margin:28px 0;">
+            <p style="margin:0 0 6px;font-size:14px;color:#888;letter-spacing:0.05em;text-transform:uppercase;">{label}</p>
+            <p style="margin:0 0 8px;font-size:36px;font-weight:bold;letter-spacing:4px;color:#0a1628;">MYFIRSTBOOKING</p>
+            <p style="margin:0;font-size:15px;color:#c9a84c;font-weight:bold;">{discount}</p>
+        </div>
+    """
+
+    if lang == 'en':
+        subject = 'Allycar | Your 5% discount coupon 🎉'
+        coupon  = COUPON_BLOCK.format(
+            label='Your exclusive coupon',
+            discount='5% off your first booking'
+        )
+        html = f"""
+        <div style="font-family:Arial,sans-serif;color:#333;max-width:600px;">
+            <p>Hi, {name}!</p>
+            <p>Great to have you here! Here is your welcome coupon:</p>
+            {coupon}
+            <p>How to use it:</p>
+            <ol>
+                <li>Go to <a href="https://www.allycar.com" style="color:#c9a84c;">www.allycar.com</a></li>
+                <li>Choose your vehicle and travel dates</li>
+                <li>Enter the code <strong>MYFIRSTBOOKING</strong> in the coupon field</li>
+                <li>The 5% discount will be applied automatically</li>
+            </ol>
+            <p>Any questions? Just reply to this email — our team is ready to help!</p>
+            <p>See you soon in Orlando! 🌴</p>
+            {FOOTER}
+        </div>"""
+
+    elif lang == 'es':
+        subject = 'Allycar | Tu cupón de 5% de descuento 🎉'
+        coupon  = COUPON_BLOCK.format(
+            label='Tu cupón exclusivo',
+            discount='5% de descuento en tu primera reserva'
+        )
+        html = f"""
+        <div style="font-family:Arial,sans-serif;color:#333;max-width:600px;">
+            <p>¡Hola, {name}!</p>
+            <p>¡Qué bueno tenerte aquí! Aquí está tu cupón de bienvenida:</p>
+            {coupon}
+            <p>Cómo usarlo:</p>
+            <ol>
+                <li>Entra en <a href="https://www.allycar.com" style="color:#c9a84c;">www.allycar.com</a></li>
+                <li>Elige tu vehículo y las fechas de tu viaje</li>
+                <li>Ingresa el código <strong>MYFIRSTBOOKING</strong> en el campo de cupón</li>
+                <li>El 5% de descuento se aplicará automáticamente</li>
+            </ol>
+            <p>¿Alguna duda? Solo responde este correo — ¡nuestro equipo está listo para ayudarte!</p>
+            <p>¡Hasta pronto en Orlando! 🌴</p>
+            {FOOTER}
+        </div>"""
+
+    else:  # pt (default)
+        subject = 'Allycar | Seu cupom de 5% de desconto 🎉'
+        coupon  = COUPON_BLOCK.format(
+            label='Seu cupom exclusivo',
+            discount='5% de desconto na sua primeira reserva'
+        )
+        html = f"""
+        <div style="font-family:Arial,sans-serif;color:#333;max-width:600px;">
+            <p>Olá, {name}!</p>
+            <p>Que ótimo ter você aqui! Aqui está o seu cupom de boas-vindas:</p>
+            {coupon}
+            <p>Para usar o cupom, basta:</p>
+            <ol>
+                <li>Acesse <a href="https://www.allycar.com" style="color:#c9a84c;">www.allycar.com</a></li>
+                <li>Escolha o veículo e as datas da sua viagem</li>
+                <li>Digite o código <strong>MYFIRSTBOOKING</strong> no campo de cupom</li>
+                <li>O desconto de 5% será aplicado automaticamente</li>
+            </ol>
+            <p>Qualquer dúvida, é só responder este e-mail — nossa equipe está pronta para te ajudar!</p>
+            <p>Até breve em Orlando! 🌴</p>
+            {FOOTER}
+        </div>"""
+
+    return subject, html
 
 @app.route('/trigger-send', methods=['GET', 'POST'])
 def trigger_send():
