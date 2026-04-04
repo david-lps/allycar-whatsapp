@@ -534,8 +534,8 @@ def hq_create_contact():
             'last_name': data.get('last_name', '').strip(),
             'email': data.get('email', '').strip(),
             'birthdate': data.get('birthdate', '').strip(),   # YYYY-MM-DD
-            'driver_license': data.get('license_number', '').strip()
-            #'phone_number': data.get('phone_number', '').strip(),
+            'driver_license': data.get('license_number', '').strip(),
+            # 'phone_number': data.get('phone_number', '').strip(),
         }
 
         # remove vazios
