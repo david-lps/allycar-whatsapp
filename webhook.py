@@ -517,6 +517,7 @@ def _cors(response):
 
 
 # ── 1. Criar contato ───────────────────────────────────────────────────────
+import http.client
 from urllib.parse import urlencode
 
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
@@ -528,38 +529,40 @@ def hq_create_contact():
         data = request.get_json(force=True) or {}
         category_id = data.get('category_id', 3)
 
-        form = {
-            'entity': 'person',
+        payload = urlencode({
+            'contact_entity': 'person',
             'first_name': data.get('first_name', '').strip(),
             'last_name': data.get('last_name', '').strip(),
             'email': data.get('email', '').strip(),
-            'birthdate': data.get('birthdate', '').strip(),   # YYYY-MM-DD
+            'birthdate': data.get('birthdate', '').strip(),
             'driver_license': data.get('license_number', '').strip(),
-            # 'phone_number': data.get('phone_number', '').strip(),
+        })
+
+        print('➡️ http.client payload:', payload)
+
+        conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
+        headers = {
+            'Authorization': HQ_API_TOKEN,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
         }
 
-        # remove vazios
-        form = {k: v for k, v in form.items() if v != ''}
-
-        print('➡️ HQ create-contact form:', form)
-
-        resp = requests.post(
-            f'{HQ_API_BASE}/contacts/categories/{category_id}/contacts',
-            headers={
-                'Authorization': HQ_API_TOKEN,
-                'Accept': 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            data=form,
-            timeout=15
+        conn.request(
+            "POST",
+            f"/api-america-miami/contacts/categories/{category_id}/contacts",
+            payload,
+            headers
         )
 
-        print('⬅️ HQ create-contact status:', resp.status_code)
-        print('⬅️ HQ create-contact response:', resp.text)
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+
+        print('⬅️ http.client status:', res.status)
+        print('⬅️ http.client response:', body)
 
         response = app.response_class(
-            response=resp.text,
-            status=resp.status_code,
+            response=body,
+            status=res.status,
             mimetype='application/json'
         )
         return _cors(response)
