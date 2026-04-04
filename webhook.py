@@ -517,6 +517,8 @@ def _cors(response):
 
 
 # ── 1. Criar contato ───────────────────────────────────────────────────────
+from urllib.parse import urlencode
+
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato na HQ Rental evitando CORS no browser."""
@@ -525,29 +527,38 @@ def hq_create_contact():
         return _cors(app.make_default_options_response())
 
     try:
-        data = request.get_json()
+        data = request.get_json(force=True) or {}
 
         category_id = data.get('category_id', 3)
 
-        # Monta o body em form-urlencoded igual ao que a HQ Rental espera
         form = {
             'contact_entity': 'person',
-            'first_name':     data.get('first_name', ''),
-            'last_name':      data.get('last_name', ''),
-            'email':          data.get('email', ''),
-            'birthdate_day':  data.get('birthdate_day', ''),
-            'birthdate_month':data.get('birthdate_month', ''),
-            'birthdate_year': data.get('birthdate_year', ''),
-            'driver_license[items][1][type]':   'national_id',
-            'driver_license[items][1][number]': data.get('license_number', ''),
+            'first_name': data.get('first_name', '').strip(),
+            'last_name': data.get('last_name', '').strip(),
+            'email': data.get('email', '').strip(),
+            'birthdate_day': str(data.get('birthdate_day', '')).strip(),
+            'birthdate_month': str(data.get('birthdate_month', '')).strip(),
+            'birthdate_year': str(data.get('birthdate_year', '')).strip(),
+            'driver_license[items][1][number]': str(data.get('license_number', '')).strip(),
         }
+
+        payload = urlencode(form)
+
+        print('➡️ HQ create-contact payload:', payload)
 
         resp = requests.post(
             f'{HQ_API_BASE}/contacts/categories/{category_id}/contacts',
-            headers={'Authorization': HQ_API_TOKEN},
-            data=form,
+            headers={
+                'Authorization': HQ_API_TOKEN,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json'
+            },
+            data=payload,
             timeout=15
         )
+
+        print('⬅️ HQ create-contact status:', resp.status_code)
+        print('⬅️ HQ create-contact response:', resp.text)
 
         response = app.response_class(
             response=resp.text,
