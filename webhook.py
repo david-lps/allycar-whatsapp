@@ -527,19 +527,20 @@ def hq_create_contact():
     try:
         data = request.get_json(force=True) or {}
         category_id = data.get('category_id', 3)
-        
+
         form = {
-            'contact[entity]': 'person',
-            'contact[first_name]': 'Davisao',
-            'contact[last_name]': data.get('last_name', '').strip(),
-            'contact[email]': data.get('email', '').strip(),
-            'contact[birthdate_day]': str(data.get('birthdate_day', '')).strip(),
-            'contact[birthdate_month]': str(data.get('birthdate_month', '')).strip(),
-            'contact[birthdate_year]': str(data.get('birthdate_year', '')).strip(),
-            'contact[driver_license][items][1][type]': 'national_id',
-            'contact[driver_license][items][1][number]': str(data.get('license_number', '')).strip(),
+            'entity': 'person',
+            'first_name': data.get('first_name', '').strip(),
+            'last_name': data.get('last_name', '').strip(),
+            'email': data.get('email', '').strip(),
+            'birthdate': data.get('birthdate', '').strip(),   # YYYY-MM-DD
+            'driver_license': data.get('license_number', '').strip()
+            #'phone_number': data.get('phone_number', '').strip(),
         }
-        
+
+        # remove vazios
+        form = {k: v for k, v in form.items() if v != ''}
+
         print('➡️ HQ create-contact form:', form)
 
         resp = requests.post(
