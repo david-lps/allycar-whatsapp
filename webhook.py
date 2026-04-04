@@ -534,10 +534,11 @@ def hq_create_contact():
             'first_name': data.get('first_name', '').strip(),
             'last_name': data.get('last_name', '').strip(),
             'email': data.get('email', '').strip(),
-            'birthdate': data.get('birthdate', '').strip(),
+            'phone_number': data.get('phone_number', '').strip(),  
+            'birthdate': data.get('birthdate', '').strip(),         
             'driver_license': data.get('license_number', '').strip(),
         })
-
+        
         print('➡️ http.client payload:', payload)
 
         conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
