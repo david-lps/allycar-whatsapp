@@ -521,14 +521,11 @@ from urllib.parse import urlencode
 
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
-    """Proxy: cria contato na HQ Rental evitando CORS no browser."""
-
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
 
     try:
         data = request.get_json(force=True) or {}
-
         category_id = data.get('category_id', 3)
 
         form = {
@@ -542,18 +539,16 @@ def hq_create_contact():
             'driver_license[items][1][number]': str(data.get('license_number', '')).strip(),
         }
 
-        payload = urlencode(form)
-
-        print('➡️ HQ create-contact payload:', payload)
+        print('➡️ HQ create-contact form:', form)
 
         resp = requests.post(
             f'{HQ_API_BASE}/contacts/categories/{category_id}/contacts',
             headers={
                 'Authorization': HQ_API_TOKEN,
+                'Accept': 'application/json',
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json'
             },
-            data=payload,
+            data=form,
             timeout=15
         )
 
@@ -575,7 +570,6 @@ def hq_create_contact():
             mimetype='application/json'
         )
         return _cors(response)
-
 
 # ── 2. Criar reserva ───────────────────────────────────────────────────────
 @app.route('/api/hq/create-reservation', methods=['POST', 'OPTIONS'])
