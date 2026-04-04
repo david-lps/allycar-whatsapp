@@ -500,6 +500,127 @@ def trigger_send():
         return {'status': 'error', 'message': str(e)}, 500
 
 
+## ======================================================
+## Criacao direta de cliente e reserva pelas APIs da HQ
+## ======================================================
+
+HQ_API_BASE  = 'https://api-america-miami.caagcrm.com/api-america-miami'
+HQ_API_TOKEN = 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
+ALLOWED_ORIGIN = 'https://www.allycar.com'
+
+# ── Cabeçalhos CORS reutilizáveis ──────────────────────────────────────────
+def _cors(response):
+    response.headers['Access-Control-Allow-Origin']  = ALLOWED_ORIGIN
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+
+# ── 1. Criar contato ───────────────────────────────────────────────────────
+@app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
+def hq_create_contact():
+    """Proxy: cria contato na HQ Rental evitando CORS no browser."""
+
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+
+    try:
+        data = request.get_json()
+
+        category_id = data.get('category_id', 3)
+
+        # Monta o body em form-urlencoded igual ao que a HQ Rental espera
+        form = {
+            'contact_entity': 'person',
+            'first_name':     data.get('first_name', ''),
+            'last_name':      data.get('last_name', ''),
+            'email':          data.get('email', ''),
+            'birthdate_day':  data.get('birthdate_day', ''),
+            'birthdate_month':data.get('birthdate_month', ''),
+            'birthdate_year': data.get('birthdate_year', ''),
+            'driver_license[items][1][type]':   'national_id',
+            'driver_license[items][1][number]': data.get('license_number', ''),
+        }
+
+        resp = requests.post(
+            f'{HQ_API_BASE}/contacts/categories/{category_id}/contacts',
+            headers={'Authorization': HQ_API_TOKEN},
+            data=form,
+            timeout=15
+        )
+
+        response = app.response_class(
+            response=resp.text,
+            status=resp.status_code,
+            mimetype='application/json'
+        )
+        return _cors(response)
+
+    except Exception as e:
+        print(f'❌ Erro proxy create-contact: {e}')
+        response = app.response_class(
+            response=f'{{"success":false,"message":"{str(e)}"}}',
+            status=500,
+            mimetype='application/json'
+        )
+        return _cors(response)
+
+
+# ── 2. Criar reserva ───────────────────────────────────────────────────────
+@app.route('/api/hq/create-reservation', methods=['POST', 'OPTIONS'])
+def hq_create_reservation():
+    """Proxy: cria reserva na HQ Rental evitando CORS no browser."""
+
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+
+    try:
+        data = request.get_json()
+
+        params = {
+            'pick_up_date':                   data.get('pick_up_date'),
+            'return_date':                    data.get('return_date'),
+            'pick_up_time':                   data.get('pick_up_time'),
+            'return_time':                    data.get('return_time'),
+            'brand_id':                       data.get('brand_id', 1),
+            'pick_up_location':               data.get('pick_up_location', 2),
+            'return_location':                data.get('return_location', 2),
+            'vehicle_class_id':               data.get('vehicle_class_id', 15),
+            'customer_id':                    data.get('customer_id'),
+            'customer_first_name':            data.get('customer_first_name'),
+            'customer_last_name':             data.get('customer_last_name'),
+            'customer_email':                 data.get('customer_email'),
+            'customer_birthdate':             data.get('customer_birthdate'),
+            'customer_driver_license_number': data.get('customer_driver_license_number'),
+            'additional_charges[]':           '',
+        }
+
+        # Remove chaves com valor None para não poluir a URL
+        params = {k: v for k, v in params.items() if v is not None}
+
+        resp = requests.post(
+            f'{HQ_API_BASE}/car-rental/reservations/confirm',
+            headers={'Authorization': HQ_API_TOKEN},
+            params=params,
+            timeout=15
+        )
+
+        response = app.response_class(
+            response=resp.text,
+            status=resp.status_code,
+            mimetype='application/json'
+        )
+        return _cors(response)
+
+    except Exception as e:
+        print(f'❌ Erro proxy create-reservation: {e}')
+        response = app.response_class(
+            response=f'{{"success":false,"message":"{str(e)}"}}',
+            status=500,
+            mimetype='application/json'
+        )
+        return _cors(response)
+
 # =====================================
 # EXECUÇÃO
 # =====================================
