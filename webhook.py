@@ -530,7 +530,7 @@ def hq_create_contact():
         
         form = {
             'contact[entity]': 'person',
-            'contact[first_name]': data.get('first_name', '').strip(),
+            'contact[first_name]': 'Davisao',
             'contact[last_name]': data.get('last_name', '').strip(),
             'contact[email]': data.get('email', '').strip(),
             'contact[birthdate_day]': str(data.get('birthdate_day', '')).strip(),
