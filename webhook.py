@@ -519,7 +519,6 @@ def _cors(response):
 import http.client
 from urllib.parse import urlencode
 
-# ── 1. Criar contato ───────────────────────────────────────────────────────
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato na HQ Rental evitando CORS no browser."""
@@ -530,6 +529,13 @@ def hq_create_contact():
     try:
         data = request.get_json()
  
+        # Decompõe birthdate YYYY-MM-DD em day/month/year
+        birthdate_str = data.get('birthdate', '')
+        try:
+            b_year, b_month, b_day = birthdate_str.split('-')
+        except Exception:
+            b_year = b_month = b_day = ''
+ 
         # Lista de tuplas garante serialização correta de campos com colchetes
         # Endpoint e campos conforme exemplo oficial Postman da HQ Rental
         form = [
@@ -537,9 +543,10 @@ def hq_create_contact():
             ('first_name',                        data.get('first_name', '')),
             ('last_name',                         data.get('last_name', '')),
             ('email',                             data.get('email', '')),
-            ('birthdate[day]',                    data.get('birthdate_day', '')),
-            ('birthdate[month]',                  data.get('birthdate_month', '')),
-            ('birthdate[year]',                   data.get('birthdate_year', '')),
+            ('phone_number',                      data.get('phone_number', '')),
+            ('birthdate[day]',                    b_day),
+            ('birthdate[month]',                  b_month),
+            ('birthdate[year]',                   b_year),
             ('driver_license[items][1][type]',    'drivers_license'),
             ('driver_license[items][1][number]',  data.get('license_number', '')),
         ]
