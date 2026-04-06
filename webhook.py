@@ -555,15 +555,15 @@ def hq_create_contact():
  
         print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
  
-        # Endpoint correto conforme documentação oficial HQ Rental
+        # Endpoint correto: criar contato na categoria
         resp = requests.post(
-            f'{HQ_API_BASE}/car-rental/reservations/customer',
+            f'{HQ_API_BASE}/contacts/categories/3/contacts',
             headers={'Authorization': HQ_API_TOKEN},
             data=form,
             timeout=15
         )
  
-        print(f"Resposta HQ create-contact: {resp.status_code} | {resp.text[:300]}")
+        print(f"Resposta HQ create-contact: {resp.status_code} | {resp.text[:500]}")
  
         response = app.response_class(
             response=resp.text,
