@@ -515,59 +515,56 @@ def _cors(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-
 # ── 1. Criar contato ───────────────────────────────────────────────────────
 import http.client
 from urllib.parse import urlencode
 
+# ── 1. Criar contato ───────────────────────────────────────────────────────
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
+    """Proxy: cria contato na HQ Rental evitando CORS no browser."""
+ 
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
-
+ 
     try:
-        data = request.get_json(force=True) or {}
-        category_id = data.get('category_id', 3)
-
-        payload = urlencode({
-            'contact_entity': 'person',
-            'first_name': data.get('first_name', '').strip(),
-            'last_name': data.get('last_name', '').strip(),
-            'email': data.get('email', '').strip(),
-            'phone_number': data.get('phone_number', '').strip(),  
-            'birthdate': data.get('birthdate', '').strip(),         
-            'driver_license': data.get('license_number', '').strip(),
-        })
-        
-        print('➡️ http.client payload:', payload)
-
-        conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
-        headers = {
-            'Authorization': HQ_API_TOKEN,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-        }
-
-        conn.request(
-            "POST",
-            f"/api-america-miami/contacts/categories/{category_id}/contacts",
-            payload,
-            headers
+        data = request.get_json()
+ 
+        # Lista de tuplas garante serialização correta de campos com colchetes
+        # Endpoint e campos conforme exemplo oficial Postman da HQ Rental
+        form = [
+            ('contact_entity',                    'person'),
+            ('first_name',                        data.get('first_name', '')),
+            ('last_name',                         data.get('last_name', '')),
+            ('email',                             data.get('email', '')),
+            ('birthdate[day]',                    data.get('birthdate_day', '')),
+            ('birthdate[month]',                  data.get('birthdate_month', '')),
+            ('birthdate[year]',                   data.get('birthdate_year', '')),
+            ('driver_license[items][1][type]',    'drivers_license'),
+            ('driver_license[items][1][number]',  data.get('license_number', '')),
+        ]
+        # Remove campos vazios
+        form = [(k, v) for k, v in form if v]
+ 
+        print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
+ 
+        # Endpoint correto conforme documentação oficial HQ Rental
+        resp = requests.post(
+            f'{HQ_API_BASE}/car-rental/reservations/customer',
+            headers={'Authorization': HQ_API_TOKEN},
+            data=form,
+            timeout=15
         )
-
-        res = conn.getresponse()
-        body = res.read().decode("utf-8")
-
-        print('⬅️ http.client status:', res.status)
-        print('⬅️ http.client response:', body)
-
+ 
+        print(f"Resposta HQ create-contact: {resp.status_code} | {resp.text[:300]}")
+ 
         response = app.response_class(
-            response=body,
-            status=res.status,
+            response=resp.text,
+            status=resp.status_code,
             mimetype='application/json'
         )
         return _cors(response)
-
+ 
     except Exception as e:
         print(f'❌ Erro proxy create-contact: {e}')
         response = app.response_class(
