@@ -522,7 +522,7 @@ from urllib.parse import urlencode
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato na HQ Rental evitando CORS no browser."""
- 
+
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
  
