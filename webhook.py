@@ -553,8 +553,10 @@ def hq_create_contact():
         # Remove campos vazios
         form = [(k, v) for k, v in form if v]
  
+        print(f"Payload recebido pelo proxy: {data}")
         print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
- 
+        print(f"Form montado: {form}")
+        
         # Endpoint correto: criar contato na categoria
         resp = requests.post(
             f'{HQ_API_BASE}/contacts/categories/3/contacts',
