@@ -522,7 +522,7 @@ from urllib.parse import urlencode
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato na HQ Rental evitando CORS no browser."""
-
+ 
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
  
@@ -556,12 +556,14 @@ def hq_create_contact():
         print(f"Payload recebido pelo proxy: {data}")
         print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
         print(f"Form montado: {form}")
-        
-        # Endpoint correto: criar contato na categoria
+ 
+        # multipart/form-data (igual ao Postman formdata)
+        # requests.post com files= força multipart sem precisar de arquivos reais
+        files = {k: (None, v) for k, v in form}
         resp = requests.post(
             f'{HQ_API_BASE}/contacts/categories/3/contacts',
             headers={'Authorization': HQ_API_TOKEN},
-            data=form,
+            files=files,
             timeout=15
         )
  
