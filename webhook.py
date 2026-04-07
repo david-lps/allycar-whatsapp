@@ -536,18 +536,18 @@ def hq_create_contact():
         except Exception:
             b_year = b_month = b_day = ''
  
-        # Lista de tuplas garante serialização correta de campos com colchetes
-        # Endpoint e campos conforme exemplo oficial Postman da HQ Rental
+        # Campos conforme documentação oficial HQ Rental (x-www-form-urlencoded)
+        # birthdate sem colchetes: birthdate_day, birthdate_month, birthdate_year
         form = [
             ('contact_entity',                    'person'),
             ('first_name',                        data.get('first_name', '')),
             ('last_name',                         data.get('last_name', '')),
             ('email',                             data.get('email', '')),
             ('phone_number',                      data.get('phone_number', '')),
-            ('birthdate[day]',                    b_day),
-            ('birthdate[month]',                  b_month),
-            ('birthdate[year]',                   b_year),
-            ('driver_license[items][1][type]',    'drivers_license'),
+            ('birthdate_day',                     b_day),
+            ('birthdate_month',                   b_month),
+            ('birthdate_year',                    b_year),
+            ('driver_license[items][1][type]',    'national_id'),
             ('driver_license[items][1][number]',  data.get('license_number', '')),
         ]
         # Remove campos vazios
@@ -557,13 +557,10 @@ def hq_create_contact():
         print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
         print(f"Form montado: {form}")
  
-        # multipart/form-data (igual ao Postman formdata)
-        # requests.post com files= força multipart sem precisar de arquivos reais
-        files = {k: (None, v) for k, v in form}
         resp = requests.post(
             f'{HQ_API_BASE}/contacts/categories/3/contacts',
             headers={'Authorization': HQ_API_TOKEN},
-            files=files,
+            data=form,
             timeout=15
         )
  
