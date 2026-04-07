@@ -504,6 +504,8 @@ def trigger_send():
 ## Criacao direta de cliente e reserva pelas APIs da HQ
 ## ======================================================
 
+HQ_BASE    = 'api-america-miami.caagcrm.com'
+HQ_PATH    = '/api-america-miami'
 HQ_API_BASE  = 'https://api-america-miami.caagcrm.com/api-america-miami'
 HQ_API_TOKEN = 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
 ALLOWED_ORIGIN = 'https://www.allycar.com'
@@ -515,77 +517,99 @@ def _cors(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-# ── 1. Criar contato ───────────────────────────────────────────────────────
-import http.client
-from urllib.parse import quote_plus
-
+# ── 1. Criar contato + retornar contact_id ────────────────────────────────
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
-    """Proxy: cria contato na HQ Rental evitando CORS no browser."""
+    """Proxy: cria contato via /car-rental/reservations/customer (multipart)."""
  
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
  
     try:
+        import http.client, json
+        from urllib.parse import urlencode
+ 
         data = request.get_json()
+        print(f"[create-contact] payload recebido: {data}")
  
-        # Decompõe birthdate YYYY-MM-DD em day/month/year
-        birthdate_str = data.get('birthdate', '')
-        try:
-            b_year, b_month, b_day = birthdate_str.split('-')
-        except Exception:
-            b_year = b_month = b_day = ''
-
-        # Monta payload como string pura, exatamente como o exemplo oficial da HQ
-        fields = [
-            ('contact_entity',                   'person'),
-            ('first_name',                       data.get('first_name', '')),
-            ('last_name',                        data.get('last_name', '')),
-            ('email',                            data.get('email', '')),
-            ('phone_number',                     data.get('phone_number', '')),
-            ('birthdate_day',                    b_day),
-            ('birthdate_month',                  b_month),
-            ('birthdate_year',                   b_year),
-            ('driver_license[items][1][type]',   'national_id'),
-            ('driver_license[items][1][number]', data.get('license_number', '')),
-        ]
-        payload = '&'.join(f"{quote_plus(k)}={quote_plus(v)}" for k, v in fields if v)
+        # Campos confirmados via curl --form (multipart/form-data)
+        # field_254 = DL Number (campo customizado da conta)
+        fields = {
+            'contact_entity': 'person',
+            'first_name':     data.get('first_name', ''),
+            'last_name':      data.get('last_name', ''),
+            'email':          data.get('email', ''),
+            'phone_number':   data.get('phone_number', ''),
+            'birthdate':      data.get('birthdate', ''),
+            'field_254':      data.get('license_number', ''),
+            'pick_up_date':   data.get('pick_up_date', ''),
+            'return_date':    data.get('return_date', ''),
+            'pick_up_location': data.get('pick_up_location', '2'),
+            'return_location':  data.get('return_location', '2'),
+            'brand_id':         data.get('brand_id', '1'),
+            'vehicle_class_id': data.get('vehicle_class_id', '15'),
+        }
  
-        print(f"Payload recebido pelo proxy: {data}")
-        print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
-        print(f"Payload string enviado: {payload}")
+        # Monta multipart manualmente
+        boundary = 'HQBoundary1234567890'
+        body_parts = []
+        for key, value in fields.items():
+            if value:
+                body_parts.append(
+                    f'--{boundary}\r\n'
+                    f'Content-Disposition: form-data; name="{key}"\r\n\r\n'
+                    f'{value}'
+                )
+        body = '\r\n'.join(body_parts) + f'\r\n--{boundary}--'
+        body_bytes = body.encode('utf-8')
  
-        import http.client
-        conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
+        print(f"[create-contact] enviando para HQ...")
+ 
+        conn = http.client.HTTPSConnection(HQ_BASE)
         conn.request(
-            "POST",
-            "/api-america-miami/contacts/categories/3/contacts",
-            payload,
-            {'Authorization': HQ_API_TOKEN}
+            'POST',
+            f'{HQ_PATH}/car-rental/reservations/customer',
+            body_bytes,
+            {
+                'Authorization': HQ_API_TOKEN,
+                'Content-Type': f'multipart/form-data; boundary={boundary}',
+                'Content-Length': str(len(body_bytes)),
+            }
         )
         res = conn.getresponse()
-        resp_text = res.read().decode("utf-8")
+        resp_text = res.read().decode('utf-8')
         resp_status = res.status
  
-        print(f"Resposta HQ create-contact: {resp_status} | {resp_text[:500]}")
+        print(f"[create-contact] resposta HQ: {resp_status} | {resp_text[:500]}")
  
-        import json
         try:
             resp_json = json.loads(resp_text)
         except Exception:
-            resp_json = {"error": resp_text}
+            resp_json = {'error': resp_text}
+ 
+        # Normaliza retorno para { contact: { id: X } }
+        contact_id = (
+            resp_json.get('data', {}).get('contact_id') or
+            resp_json.get('contact', {}).get('id') if resp_json.get('contact') else None
+        )
+ 
+        if contact_id:
+            normalized = {'contact': {'id': contact_id}, 'original': resp_json}
+        else:
+            normalized = resp_json
  
         response = app.response_class(
-            response=json.dumps(resp_json),
+            response=json.dumps(normalized),
             status=resp_status,
             mimetype='application/json'
         )
         return _cors(response)
  
     except Exception as e:
-        print(f'❌ Erro proxy create-contact: {e}')
+        import json
+        print(f'[create-contact] erro: {e}')
         response = app.response_class(
-            response=f'{{"success":false,"message":"{str(e)}"}}',
+            response=json.dumps({'success': False, 'message': str(e)}),
             status=500,
             mimetype='application/json'
         )
