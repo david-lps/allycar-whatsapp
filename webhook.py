@@ -517,7 +517,7 @@ def _cors(response):
 
 # ── 1. Criar contato ───────────────────────────────────────────────────────
 import http.client
-from urllib.parse import urlencode
+from urllib.parse import quote_plus
 
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
@@ -535,40 +535,49 @@ def hq_create_contact():
             b_year, b_month, b_day = birthdate_str.split('-')
         except Exception:
             b_year = b_month = b_day = ''
- 
-        # Campos conforme documentação oficial HQ Rental (x-www-form-urlencoded)
-        # birthdate sem colchetes: birthdate_day, birthdate_month, birthdate_year
-        form = [
-            ('contact_entity',                    'person'),
-            ('first_name',                        data.get('first_name', '')),
-            ('last_name',                         data.get('last_name', '')),
-            ('email',                             data.get('email', '')),
-            ('phone_number',                      data.get('phone_number', '')),
-            ('birthdate_day',                     b_day),
-            ('birthdate_month',                   b_month),
-            ('birthdate_year',                    b_year),
-            ('driver_license[items][1][type]',    'national_id'),
-            ('driver_license[items][1][number]',  data.get('license_number', '')),
+
+        # Monta payload como string pura, exatamente como o exemplo oficial da HQ
+        fields = [
+            ('contact_entity',                   'person'),
+            ('first_name',                       data.get('first_name', '')),
+            ('last_name',                        data.get('last_name', '')),
+            ('email',                            data.get('email', '')),
+            ('phone_number',                     data.get('phone_number', '')),
+            ('birthdate_day',                    b_day),
+            ('birthdate_month',                  b_month),
+            ('birthdate_year',                   b_year),
+            ('driver_license[items][1][type]',   'national_id'),
+            ('driver_license[items][1][number]', data.get('license_number', '')),
         ]
-        # Remove campos vazios
-        form = [(k, v) for k, v in form if v]
+        payload = '&'.join(f"{quote_plus(k)}={quote_plus(v)}" for k, v in fields if v)
  
         print(f"Payload recebido pelo proxy: {data}")
         print(f"Criando contato: {data.get('first_name')} {data.get('last_name')} | {data.get('email')}")
-        print(f"Form montado: {form}")
+        print(f"Payload string enviado: {payload}")
  
-        resp = requests.post(
-            f'{HQ_API_BASE}/contacts/categories/3/contacts',
-            headers={'Authorization': HQ_API_TOKEN},
-            data=form,
-            timeout=15
+        import http.client
+        conn = http.client.HTTPSConnection("api-america-miami.caagcrm.com")
+        conn.request(
+            "POST",
+            "/api-america-miami/contacts/categories/3/contacts",
+            payload,
+            {'Authorization': HQ_API_TOKEN}
         )
+        res = conn.getresponse()
+        resp_text = res.read().decode("utf-8")
+        resp_status = res.status
  
-        print(f"Resposta HQ create-contact: {resp.status_code} | {resp.text[:500]}")
+        print(f"Resposta HQ create-contact: {resp_status} | {resp_text[:500]}")
+ 
+        import json
+        try:
+            resp_json = json.loads(resp_text)
+        except Exception:
+            resp_json = {"error": resp_text}
  
         response = app.response_class(
-            response=resp.text,
-            status=resp.status_code,
+            response=json.dumps(resp_json),
+            status=resp_status,
             mimetype='application/json'
         )
         return _cors(response)
