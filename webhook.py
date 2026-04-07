@@ -654,6 +654,62 @@ def hq_create_reservation():
             timeout=15
         )
 
+        # ================================
+        # ENVIO DE EMAIL (SOMENTE SUCESSO)
+        # ================================
+        if resp.status_code in (200, 201):
+            try:
+                destinatarios = [
+                    "higor@allycar.com",
+                    "david@allycar.com"
+                ]
+
+                conteudo = f"""
+Nova reserva criada com sucesso 🚗
+
+Cliente:
+Nome: {data.get('customer_first_name')} {data.get('customer_last_name')}
+Email: {data.get('customer_email')}
+
+Reserva:
+Pick-up: {data.get('pick_up_date')} às {data.get('pick_up_time')}
+Return: {data.get('return_date')} às {data.get('return_time')}
+
+Local:
+Pick-up location ID: {data.get('pick_up_location')}
+Return location ID: {data.get('return_location')}
+
+Veículo:
+Class ID: {data.get('vehicle_class_id')}
+
+Documento:
+CNH: {data.get('customer_driver_license_number')}
+Nascimento: {data.get('customer_birthdate')}
+"""
+
+                email_resp = requests.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "from": "Allycar <booking@allycar.com>",
+                        "to": destinatarios,
+                        "subject": f"🚗 Nova reserva TACOMA: {data.get('customer_first_name')} {data.get('customer_last_name')}",
+                        "text": conteudo
+                    },
+                    timeout=10
+                )
+
+                if email_resp.status_code in (200, 201):
+                    print("✅ Email de reserva enviado")
+                else:
+                    print(f"⚠️ Falha ao enviar email: {email_resp.status_code} - {email_resp.text}")
+
+            except Exception as e:
+                print(f"⚠️ Erro ao enviar email (ignorado): {e}")
+        
         response = app.response_class(
             response=resp.text,
             status=resp.status_code,
