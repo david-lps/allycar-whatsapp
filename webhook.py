@@ -365,7 +365,7 @@ def capturar_lead_home():
         # 2) REGISTRA NA PLANILHA (independente do e-mail — best effort)
         try:
             sheet = conectar_google_sheets()
-            worksheet = sheet.spreadsheet.worksheet("Current MQLs")
+            worksheet = sheet.spreadsheet.worksheet("Leads")
             worksheet.append_row([
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 name,
