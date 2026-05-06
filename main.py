@@ -12,6 +12,7 @@ import requests
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from typing import Optional
 
 import base64
 from email.message import EmailMessage
@@ -643,11 +644,12 @@ def _email_templates(nome: str, lang: str):
     return subject, html
 
 def _resend_send_email(
-    to_email: str,
-    subject: str,
-    html: str,
-    attachment_path: str | None = None
+    to_email,
+    subject,
+    html,
+    attachment_path=None
 ):
+    
     """Envia email via Resend. Retorna (True, 'ok') ou (False, 'erro')."""
     try:
         payload = {
