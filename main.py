@@ -9,6 +9,7 @@ import http.client
 import json
 import smtplib
 import requests
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -429,15 +430,72 @@ def _pick_lang(country: str) -> str:
     return "en"
 
 def _email_templates(nome: str, lang: str):
+    nome = nome or "there"
+
     if lang == "pt":
-        subject = "Allycar | Sua locação em Orlando"
+        subject = "Allycar | Parceria premium para clientes em Orlando"
         html = f"""
-        <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+        <div style="font-family: Arial, sans-serif; color:#333; max-width:640px; line-height:1.55;">
           <p>Olá {nome},</p>
+
+          <p>
+            Meu nome é <strong>Ofli Guimarães</strong>, fundador da <strong>Allycar</strong>, 
+            uma locadora premium em Orlando criada para atender famílias e viajantes que buscam 
+            uma experiência mais simples, confortável e sem surpresas.
+          </p>
+
+          <p>
+            Sabemos que, para uma agência de viagem ou parceiro de turismo, recomendar um serviço 
+            não é apenas indicar um fornecedor — é colocar a própria reputação em jogo.
+          </p>
+
+          <p>
+            Por isso, a Allycar foi construída para resolver uma das maiores dores de quem chega a Orlando:
+            aluguel de carro com filas, taxas ocultas, seguros confusos, bloqueios no cartão, falta de suporte 
+            e, muitas vezes, a frustração de não receber o carro esperado.
+          </p>
+
+          <p>
+            Nosso modelo é diferente: entregamos uma experiência completa, premium e transparente:
+          </p>
+
+          <ul>
+            <li><strong>Veículos novos e premium</strong></li>
+            <li><strong>Escolha do carro exato</strong>, não apenas da categoria</li>
+            <li><strong>Seguro, pedágios e condutor adicional incluídos</strong></li>
+            <li><strong>Cadeirinha inclusa</strong> para famílias</li>
+            <li><strong>Entrega gratuita em Orlando</strong></li>
+            <li><strong>Sem filas, sem depósito caução e sem taxas escondidas</strong></li>
+            <li><strong>Atendimento 24/7 em português, inglês e espanhol</strong></li>
+          </ul>
+
+          <p>
+            Não competimos para ser a opção mais barata. Competimos para ser a opção que o cliente agradece 
+            por ter escolhido — e que o parceiro tem orgulho de recomendar.
+          </p>
+
+          <p>
+            Estou enviando em anexo uma breve apresentação sobre a Allycar e nosso programa de parceria. 
+            Gostaria muito de agendar uma conversa rápida para entender se faz sentido construirmos uma 
+            parceria com vocês.
+          </p>
+
+          <p>
+            Você teria disponibilidade para uma conversa de 15 minutos nos próximos dias?
+          </p>
+
+          <p>
+            Atenciosamente,<br>
+            <strong>Ofli Guimarães</strong><br>
+            Founder, Allycar
+          </p>
+
           <br>
-          <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+
+          <div style="background:#006354;padding:18px;border-radius:10px;text-align:center;">
             <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
-            <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+            <p style="margin:0;color:#fff;font-weight:bold;">Allycar</p>
+            <p style="margin:6px 0 0;color:#fff;font-size:13px;">Premium Car Rental Experience in Orlando</p>
             <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
           </div>
         </div>
@@ -445,15 +503,69 @@ def _email_templates(nome: str, lang: str):
         return subject, html
 
     if lang == "es":
-        subject = "Allycar | Tu renta de auto en Orlando"
+        subject = "Allycar | Alianza premium para clientes en Orlando"
         html = f"""
-        <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+        <div style="font-family: Arial, sans-serif; color:#333; max-width:640px; line-height:1.55;">
           <p>Hola {nome},</p>
-          <p>Somos <strong>Allycar</strong> — Renta de Autos Premium en Orlando 🇺🇸🚗</p>
+
+          <p>
+            Mi nombre es <strong>Ofli Guimarães</strong>, fundador de <strong>Allycar</strong>, 
+            una rentadora premium en Orlando creada para atender familias y viajeros que buscan 
+            una experiencia más simple, cómoda y sin sorpresas.
+          </p>
+
+          <p>
+            Sabemos que, para una agencia de viajes o socio de turismo, recomendar un servicio 
+            no es solo indicar un proveedor — es poner en juego su propia reputación frente al cliente.
+          </p>
+
+          <p>
+            Por eso, Allycar fue creada para resolver una de las mayores frustraciones de quienes llegan a Orlando:
+            renta de autos con filas, cargos ocultos, seguros confusos, depósitos en la tarjeta, falta de soporte 
+            y, muchas veces, la frustración de no recibir el vehículo esperado.
+          </p>
+
+          <p>
+            Nuestro modelo es diferente: entregamos una experiencia completa, premium y transparente:
+          </p>
+
+          <ul>
+            <li><strong>Vehículos nuevos y premium</strong></li>
+            <li><strong>Elección del auto exacto</strong>, no solo de la categoría</li>
+            <li><strong>Seguro, peajes y conductor adicional incluidos</strong></li>
+            <li><strong>Silla para niños incluida</strong> para familias</li>
+            <li><strong>Entrega gratuita en Orlando</strong></li>
+            <li><strong>Sin filas, sin depósito de seguridad y sin cargos ocultos</strong></li>
+            <li><strong>Atención 24/7 en español, portugués e inglés</strong></li>
+          </ul>
+
+          <p>
+            No competimos para ser la opción más barata. Competimos para ser la opción que el cliente agradece 
+            haber elegido — y que el socio se siente orgulloso de recomendar.
+          </p>
+
+          <p>
+            Adjunto una breve presentación sobre Allycar y nuestro programa de alianzas. 
+            Me gustaría agendar una conversación rápida para entender si tiene sentido construir 
+            una posible alianza con ustedes.
+          </p>
+
+          <p>
+            ¿Tendrías disponibilidad para una llamada de 15 minutos en los próximos días?
+          </p>
+
+          <p>
+            Saludos cordiales,<br>
+            <strong>Ofli Guimarães</strong><br>
+            Founder, Allycar
+          </p>
+
           <br>
-          <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+
+          <div style="background:#006354;padding:18px;border-radius:10px;text-align:center;">
             <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
-            <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+            <p style="margin:0;color:#fff;font-weight:bold;">Allycar</p>
+            <p style="margin:6px 0 0;color:#fff;font-size:13px;">Premium Car Rental Experience in Orlando</p>
             <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
           </div>
         </div>
@@ -461,42 +573,122 @@ def _email_templates(nome: str, lang: str):
         return subject, html
 
     # EN
-    subject = "Allycar | Your Vehicle Rental in Orlando"
+    subject = "Allycar | Premium partnership for Orlando travelers"
     html = f"""
-    <div style="font-family: Arial, sans-serif; color:#333; max-width:600px;">
+    <div style="font-family: Arial, sans-serif; color:#333; max-width:640px; line-height:1.55;">
       <p>Hello {nome},</p>
-      <p>This is <strong>Allycar</strong> — Premium Car Rental in Orlando 🇺🇸🚗</p>
+
+      <p>
+        My name is <strong>Ofli Guimarães</strong>, founder of <strong>Allycar</strong>, 
+        a premium car rental company in Orlando built for families and travelers who value 
+        comfort, simplicity and peace of mind.
+      </p>
+
+      <p>
+        We know that, for a travel agency or tourism partner, recommending a service is not just 
+        about suggesting a supplier — it is about protecting your own reputation with your clients.
+      </p>
+
+      <p>
+        Allycar was created to solve one of the biggest frustrations travelers face when arriving in Orlando:
+        long lines, hidden fees, confusing insurance, credit card deposits, lack of support and, often, 
+        not receiving the vehicle they expected.
+      </p>
+
+      <p>
+        Our model is different: we deliver a complete, premium and transparent experience:
+      </p>
+
+      <ul>
+        <li><strong>New and premium vehicles</strong></li>
+        <li><strong>Choose the exact car</strong>, not just the category</li>
+        <li><strong>Insurance, tolls and additional driver included</strong></li>
+        <li><strong>Child seat included</strong> for families</li>
+        <li><strong>Free delivery in Orlando</strong></li>
+        <li><strong>No lines, no security deposit and no hidden fees</strong></li>
+        <li><strong>24/7 support in English, Portuguese and Spanish</strong></li>
+      </ul>
+
+      <p>
+        We are not trying to be the cheapest option. We are focused on being the option clients are grateful 
+        they chose — and the one partners feel proud to recommend.
+      </p>
+
+      <p>
+        I am attaching a short presentation about Allycar and our partner program. 
+        I would love to schedule a quick conversation to understand whether there is an opportunity 
+        to build a partnership with you.
+      </p>
+
+      <p>
+        Would you be available for a 15-minute call in the next few days?
+      </p>
+
+      <p>
+        Best regards,<br>
+        <strong>Ofli Guimarães</strong><br>
+        Founder, Allycar
+      </p>
+
       <br>
-      <div style="background:#006354;padding:16px;border-radius:8px;text-align:center;">
+
+      <div style="background:#006354;padding:18px;border-radius:10px;text-align:center;">
         <img src="https://allycar.com/assets/allycar.png" style="max-width:160px;display:block;margin:0 auto 10px;" alt="Allycar">
-        <p style="margin:0;color:#fff;font-weight:bold;">Allycar Team</p>
+        <p style="margin:0;color:#fff;font-weight:bold;">Allycar</p>
+        <p style="margin:6px 0 0;color:#fff;font-size:13px;">Premium Car Rental Experience in Orlando</p>
         <p style="margin:6px 0 0;color:#fff;font-size:13px;">booking@allycar.com • Orlando, FL</p>
       </div>
     </div>
     """
     return subject, html
 
-def _resend_send_email(to_email: str, subject: str, html: str):
+def _resend_send_email(
+    to_email: str,
+    subject: str,
+    html: str,
+    attachment_path: str | None = None
+):
     """Envia email via Resend. Retorna (True, 'ok') ou (False, 'erro')."""
     try:
+        payload = {
+            "from": "Allycar <booking@allycar.com>",
+            "reply_to": "david@allycar.com",
+            "to": [to_email],
+            "subject": subject,
+            "html": html
+        }
+
+        if attachment_path:
+            file_path = Path(attachment_path)
+
+            if not file_path.exists():
+                return False, f"Arquivo não encontrado: {attachment_path}"
+
+            with open(file_path, "rb") as f:
+                encoded_file = base64.b64encode(f.read()).decode("utf-8")
+
+            payload["attachments"] = [
+                {
+                    "filename": file_path.name,
+                    "content": encoded_file
+                }
+            ]
+
         resp = requests.post(
             "https://api.resend.com/emails",
             headers={
                 "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
                 "Content-Type": "application/json"
             },
-            json={
-                "from": "Allycar <booking@allycar.com>",
-                "reply_to": "david@allycar.com",
-                "to": [to_email],
-                "subject": subject,
-                "html": html
-            },
-            timeout=15
+            json=payload,
+            timeout=30
         )
+
         if resp.status_code in (200, 201):
             return True, "ok"
+
         return False, resp.text
+
     except Exception as e:
         return False, str(e)
 
@@ -633,7 +825,7 @@ def processar_leads():
                 subject, html = _email_templates(nome_b2b, lang)
 
                 print(f"📧 (B2B) Enviando email para {nome_b2b} <{email_cliente}> | {country} | {lang} ...")
-                ok, info = _resend_send_email(email_cliente, subject, html)
+                ok, info = _resend_send_email(email_cliente, subject, html, "Allycar_Premium_Partner_Program.pdf")
 
                 if ok:
                     ws_b2b.update_cell(r_idx, col_status, "Sent")
