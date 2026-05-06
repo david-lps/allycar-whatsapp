@@ -824,8 +824,13 @@ def processar_leads():
                 lang = _pick_lang(country)
                 subject, html = _email_templates(nome_b2b, lang)
 
+                pdf_pt = "Allycar_Premium_Partner_Program_PT.pdf"
+                pdf_en = "Allycar_Premium_Partner_Program_EN.pdf"
+
+                attachment_path = pdf_pt if lang == "pt" else pdf_en
+                
                 print(f"📧 (B2B) Enviando email para {nome_b2b} <{email_cliente}> | {country} | {lang} ...")
-                ok, info = _resend_send_email(email_cliente, subject, html, "Allycar_Premium_Partner_Program.pdf")
+                ok, info = _resend_send_email(email_cliente, subject, html, attachment_path)
 
                 if ok:
                     ws_b2b.update_cell(r_idx, col_status, "Sent")
