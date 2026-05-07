@@ -20,6 +20,7 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
 import urllib.parse
+import unicodedata
 
 # Importar configurações do arquivo config.py
 from config import (
@@ -103,7 +104,10 @@ def formatar_telefone(telefone):
 
 def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None):
     try:
-        pais_norm = (pais or "").lower()
+        
+        pais_norm = unicodedata.normalize("NFKD", pais or "")
+        pais_norm = "".join(c for c in pais_norm if not unicodedata.combining(c))
+        pais_norm = pais_norm.lower()
 
         # ===============================
         # 🇺🇸 USA → EMAIL
@@ -239,7 +243,18 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         # ===============================
         # 🇦🇷 🇨🇴 AR / CO → TEMPLATE LATAM
         # ===============================
-        elif pais_norm in ["argentina", "colombia", "mexico"]:
+        elif pais_norm in [
+            "argentina",
+            "colombia",
+            "mexico",
+            "chile",
+            "peru",
+            "uruguai",
+            "equador",
+            "paraguai",
+            "bolivia",
+            "venezuela"
+        ]:
             template_sid = TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
 
         # ===============================
@@ -265,7 +280,18 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
 
         print(f"✅ WhatsApp enviado para {nome} ({pais}): {message.sid}")
 
-        language = "es" if pais_norm in ["argentina", "colombia", "mexico"] else "pt"
+        language = "es" if pais_norm in [
+            "argentina",
+            "colombia",
+            "mexico",
+            "chile",
+            "peru",
+            "uruguai",
+            "equador",
+            "paraguai",
+            "bolivia",
+            "venezuela"
+        ] else "pt"
         
         # registra conversa no webhook (não bloqueante)
         try:
@@ -422,7 +448,12 @@ def _pick_lang(country: str) -> str:
         "argentina",
         "uruguay", "uruguai",
         "venezuela",
-        "guatemala"
+        "guatemala",
+        "chile",
+        "peru", "perú",
+        "equador", "ecuador",
+        "paraguai", "paraguay",
+        "bolivia", "bolívia"
     }
     if c in es_countries:
         return "es"
