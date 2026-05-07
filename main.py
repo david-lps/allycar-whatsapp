@@ -471,20 +471,15 @@ def _email_templates(nome: str, lang: str):
           <p>Olá {nome},</p>
 
           <p>
-            Meu nome é <strong>Ofli Guimarães</strong>, fundador da <strong>Allycar</strong>, 
-            uma locadora premium em Orlando criada para atender famílias e viajantes que buscam 
-            uma experiência mais simples, confortável e sem surpresas.
+            Meu nome é <strong>Ofli Guimarães</strong>, fundador da <strong>Allycar</strong>, uma locadora premium em Orlando criada para atender famílias com crianças que buscam uma experiência melhor, mais confortável e sem surpresas.
           </p>
 
           <p>
-            Sabemos que, para uma agência de viagem ou parceiro de turismo, recomendar um serviço 
-            não é apenas indicar um fornecedor — é colocar a própria reputação em jogo.
+            Sabemos que, para uma agência de viagem ou parceiro de turismo, recomendar um serviço não é apenas indicar um fornecedor, é colocar a própria reputação em jogo.
           </p>
 
           <p>
-            Por isso, a Allycar foi construída para resolver uma das maiores dores de quem chega a Orlando:
-            aluguel de carro com filas, taxas ocultas, seguros confusos, bloqueios no cartão, falta de suporte 
-            e, muitas vezes, a frustração de não receber o carro esperado.
+            Por isso, a Allycar foi construída para resolver uma das maiores dores de quem chega a Orlando com sua família: aluguel de carro com filas, taxas ocultas, seguros confusos, bloqueios no cartão, falta de suporte e, muitas vezes, a frustração de não receber o carro esperado.
           </p>
 
           <p>
@@ -500,12 +495,7 @@ def _email_templates(nome: str, lang: str):
             <li><strong>Sem filas, sem depósito caução e sem taxas escondidas</strong></li>
             <li><strong>Atendimento 24/7 em português, inglês e espanhol</strong></li>
           </ul>
-
-          <p>
-            Não competimos para ser a opção mais barata. Competimos para ser a opção que o cliente agradece 
-            por ter escolhido — e que o parceiro tem orgulho de recomendar.
-          </p>
-
+          
           <p>
             Estou enviando em anexo uma breve apresentação sobre a Allycar e nosso programa de parceria. 
             Gostaria muito de agendar uma conversa rápida para entender se faz sentido construirmos uma 
@@ -540,26 +530,21 @@ def _email_templates(nome: str, lang: str):
         <div style="font-family: Arial, sans-serif; color:#333; max-width:640px; line-height:1.55;">
           <p>Hola {nome},</p>
 
-          <p>
-            Mi nombre es <strong>Ofli Guimarães</strong>, fundador de <strong>Allycar</strong>, 
-            una rentadora premium en Orlando creada para atender familias y viajeros que buscan 
-            una experiencia más simple, cómoda y sin sorpresas.
-          </p>
-
-          <p>
-            Sabemos que, para una agencia de viajes o socio de turismo, recomendar un servicio 
-            no es solo indicar un proveedor — es poner en juego su propia reputación frente al cliente.
-          </p>
-
-          <p>
-            Por eso, Allycar fue creada para resolver una de las mayores frustraciones de quienes llegan a Orlando:
-            renta de autos con filas, cargos ocultos, seguros confusos, depósitos en la tarjeta, falta de soporte 
-            y, muchas veces, la frustración de no recibir el vehículo esperado.
-          </p>
-
-          <p>
-            Nuestro modelo es diferente: entregamos una experiencia completa, premium y transparente:
-          </p>
+            <p>
+              Mi nombre es <strong>Ofli Guimarães</strong>, fundador de <strong>Allycar</strong>, una rentadora premium en Orlando creada para familias con niños que buscan una experiencia mejor, más cómoda y sin sorpresas.
+            </p>
+            
+            <p>
+              Sabemos que, para una agencia de viajes o socio de turismo, recomendar un servicio no es solo indicar un proveedor — significa poner en juego su propia reputación.
+            </p>
+            
+            <p>
+              Por eso, Allycar fue creada para resolver uno de los mayores dolores de las familias que llegan a Orlando: la renta de autos con filas largas, cargos ocultos, seguros confusos, bloqueos en la tarjeta, falta de soporte y, muchas veces, la frustración de no recibir el vehículo esperado.
+            </p>
+            
+            <p>
+              Nuestro modelo es diferente: entregamos una experiencia completa, premium y transparente:
+            </p>
 
           <ul>
             <li><strong>Vehículos nuevos y premium</strong></li>
@@ -570,11 +555,6 @@ def _email_templates(nome: str, lang: str):
             <li><strong>Sin filas, sin depósito de seguridad y sin cargos ocultos</strong></li>
             <li><strong>Atención 24/7 en español, portugués e inglés</strong></li>
           </ul>
-
-          <p>
-            No competimos para ser la opción más barata. Competimos para ser la opción que el cliente agradece 
-            haber elegido — y que el socio se siente orgulloso de recomendar.
-          </p>
 
           <p>
             Adjunto una breve presentación sobre Allycar y nuestro programa de alianzas. 
@@ -610,26 +590,21 @@ def _email_templates(nome: str, lang: str):
     <div style="font-family: Arial, sans-serif; color:#333; max-width:640px; line-height:1.55;">
       <p>Hello {nome},</p>
 
-      <p>
-        My name is <strong>Ofli Guimarães</strong>, founder of <strong>Allycar</strong>, 
-        a premium car rental company in Orlando built for families and travelers who value 
-        comfort, simplicity and peace of mind.
-      </p>
-
-      <p>
-        We know that, for a travel agency or tourism partner, recommending a service is not just 
-        about suggesting a supplier — it is about protecting your own reputation with your clients.
-      </p>
-
-      <p>
-        Allycar was created to solve one of the biggest frustrations travelers face when arriving in Orlando:
-        long lines, hidden fees, confusing insurance, credit card deposits, lack of support and, often, 
-        not receiving the vehicle they expected.
-      </p>
-
-      <p>
-        Our model is different: we deliver a complete, premium and transparent experience:
-      </p>
+        <p>
+          My name is <strong>Ofli Guimarães</strong>, founder of <strong>Allycar</strong>, a premium car rental company in Orlando created for families with children who are looking for a better, more comfortable, and surprise-free experience.
+        </p>
+        
+        <p>
+          We know that, for a travel agency or tourism partner, recommending a service is not just about referring a supplier — it means putting your own reputation on the line.
+        </p>
+        
+        <p>
+          That is why Allycar was built to solve one of the biggest pain points for families arriving in Orlando: car rental experiences with long lines, hidden fees, confusing insurance options, credit card holds, lack of support, and, often, the frustration of not receiving the car they expected.
+        </p>
+        
+        <p>
+          Our model is different: we deliver a complete, premium, and transparent experience:
+        </p>
 
       <ul>
         <li><strong>New and premium vehicles</strong></li>
@@ -640,11 +615,6 @@ def _email_templates(nome: str, lang: str):
         <li><strong>No lines, no security deposit and no hidden fees</strong></li>
         <li><strong>24/7 support in English, Portuguese and Spanish</strong></li>
       </ul>
-
-      <p>
-        We are not trying to be the cheapest option. We are focused on being the option clients are grateful 
-        they chose — and the one partners feel proud to recommend.
-      </p>
 
       <p>
         I am attaching a short presentation about Allycar and our partner program. 
