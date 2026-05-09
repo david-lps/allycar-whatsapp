@@ -944,6 +944,7 @@ def processar_leads():
     # Conecta à planilha
     sheet = conectar_google_sheets()
     leads = sheet.get_all_records()
+    headers = sheet.row_values(1)
     
     enviados = 0
     erros = 0
@@ -962,8 +963,6 @@ def processar_leads():
         
         # Debug
         print(f"\n📋 Processando linha {idx}: {nome}")
-
-        headers = sheet.row_values(1)
 
         # Pula se já foi enviado
         if status == 'Sent':
