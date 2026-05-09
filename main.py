@@ -961,6 +961,8 @@ def processar_leads():
         # Debug
         print(f"\n📋 Processando linha {idx}: {nome}")
 
+        headers = sheet.row_values(1)
+
         # Pula se já foi enviado
         if status == 'Sent':
             print(f"⏭️  Pulando {nome} - já enviado")
@@ -978,7 +980,7 @@ def processar_leads():
         # Valida dados
         if not nome or not telefone:
             print(f"⚠️  Pulando linha {idx} - dados incompletos")
-            sheet.update_cell(idx, 7, 'Error - Incomplete data')
+            sheet.update_cell(idx, headers.index("STATUS") + 1, 'Error - Incomplete data')
             erros += 1
             continue
 
@@ -988,7 +990,7 @@ def processar_leads():
         # Verificar se já existe reserva no HQ
         if cliente_ja_tem_reserva(telefone_formatado):
             print(f"⏭️ Pulando {nome} - cliente já possui reserva")
-            sheet.update_cell(idx, 7, 'Skipped - Already has reservation')
+            sheet.update_cell(idx, headers.index("STATUS") + 1, 'Skipped - Already has reservation')
             pulados += 1
             continue
         
@@ -1000,12 +1002,10 @@ def processar_leads():
             pais_normalizado,
             email_cliente
         )
-
-        headers = sheet.row_values(1)
         
         if sucesso:
             # Atualiza planilha
-            sheet.update_cell(idx, headers.index("STATUS") + 1, "Sent")
+            sheet.update_cell(idx, headers.index("STATUS") + 1, 'Sent')
             sheet.update_cell(idx, headers.index("NOTIFICAÇÃO") + 1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             enviados += 1
             print(f"✅ Sucesso! O cliente vai receber opções interativas")
