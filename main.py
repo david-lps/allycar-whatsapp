@@ -1000,16 +1000,19 @@ def processar_leads():
             pais_normalizado,
             email_cliente
         )
+
+        headers = sheet.row_values(1)
         
         if sucesso:
             # Atualiza planilha
-            sheet.update_cell(idx, 7, 'Sent')
-            sheet.update_cell(idx, 8, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            sheet.update_cell(idx, headers.index("STATUS") + 1, "Sent")
+            sheet.update_cell(idx, headers.index("NOTIFICAÇÃO") + 1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             enviados += 1
             print(f"✅ Sucesso! O cliente vai receber opções interativas")
             print(f"   As respostas serão processadas pelo webhook")
         else:
-            sheet.update_cell(idx, 7, f'Error: {resultado[:50]}')
+            sheet.update_cell(idx, headers.index("STATUS") + 1, f'Error: {resultado[:50]}')
+
             erros += 1
         
         # Delay entre mensagens (respeitar limites Twilio)
