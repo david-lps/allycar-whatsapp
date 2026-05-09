@@ -291,6 +291,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
             "uruguai",
             "equador",
             "paraguai",
+            "guatemala",
             "bolivia",
             "venezuela"
         ] else "pt"
