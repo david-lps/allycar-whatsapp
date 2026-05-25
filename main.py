@@ -247,14 +247,20 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         elif pais_norm in [
             "argentina",
             "colombia",
+            "colômbia",
             "mexico",
+            "méxico",
             "chile",
             "peru",
             "uruguai",
+            "uruguay",
             "equador",
+            "ecuador",
             "paraguai",
+            "paraguay",
             "guatemala",
             "bolivia",
+            "bolívia",
             "venezuela"
         ]:
             template_sid = TWILIO_WHATSAPP_TEMPLATE_SID_LATAM
@@ -285,14 +291,20 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         language = "es" if pais_norm in [
             "argentina",
             "colombia",
+            "colômbia",
             "mexico",
+            "méxico",
             "chile",
             "peru",
             "uruguai",
+            "uruguay",
             "equador",
+            "ecuador",
             "paraguai",
+            "paraguay",
             "guatemala",
             "bolivia",
+            "bolívia",
             "venezuela"
         ] else "pt"
         
