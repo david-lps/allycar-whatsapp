@@ -182,7 +182,25 @@ def webhook_whatsapp():
     # Criar resposta
     resp = MessagingResponse()
     msg = resp.message()
-    
+
+    conversa = conversations[from_number]
+    lang = conversa.get("language", "pt")
+    texts = MESSAGES[lang]
+    stage = conversa['stage']
+
+    lead_info = {
+        'name': conversa['name'],
+        'phone': from_number.replace('whatsapp:', ''),
+        'category': conversa.get('category', 'Não especificado'),
+        'message': body,
+        'timestamp': conversa['timestamp']
+    }
+
+    try:
+        registrar_lead_qualificado(lead_info)
+    except Exception as e:
+        print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
+        
     # Verificar se existe conversa ativa
     if from_number not in conversations:
         msg.body(
@@ -194,11 +212,6 @@ def webhook_whatsapp():
             "Por favor, espere nuestro mensaje inicial para continuar."
         )
         return str(resp)
-    
-    conversa = conversations[from_number]
-    lang = conversa.get("language", "pt")
-    texts = MESSAGES[lang]
-    stage = conversa['stage']
     
     # ===== FLUXO DE CONVERSA =====
     
@@ -225,20 +238,6 @@ def webhook_whatsapp():
         conversa['message'] = body
         conversa['stage'] = 'finished'
         conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # REGISTRAR LEAD QUALIFICADO
-        lead_info = {
-            'name': conversa['name'],
-            'phone': from_number.replace('whatsapp:', ''),
-            'category': conversa.get('category', 'Não especificado'),
-            'message': body,
-            'timestamp': conversa['timestamp']
-        }
-
-        try:
-            registrar_lead_qualificado(lead_info)
-        except Exception as e:
-            print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
 
         msg.body(texts["final_thanks"])
         
