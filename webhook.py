@@ -183,7 +183,15 @@ def webhook_whatsapp():
     resp = MessagingResponse()
     msg = resp.message()
 
-    conversa = conversations[from_number]
+    # Normaliza chave para funcionar com WhatsApp e SMS
+    conversation_key = from_number
+
+    if conversation_key not in conversations and not from_number.startswith("whatsapp:"):
+        whatsapp_key = f"whatsapp:{from_number}"
+        if whatsapp_key in conversations:
+            conversation_key = whatsapp_key
+
+    conversa = conversations[conversation_key]
     lang = conversa.get("language", "pt")
     texts = MESSAGES[lang]
     stage = conversa['stage']
@@ -203,7 +211,7 @@ def webhook_whatsapp():
         print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
         
     # Verificar se existe conversa ativa
-    if from_number not in conversations:
+    if conversation_key not in conversations:
         msg.body(
             "Olá! 👋\n"
             "Por favor, aguarde nossa mensagem inicial para continuar.\n\n"
