@@ -187,6 +187,7 @@ def webhook_whatsapp():
     lang = conversa.get("language", "pt")
     texts = MESSAGES[lang]
     stage = conversa['stage']
+    conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     lead_info = {
         'name': conversa['name'],
@@ -237,8 +238,7 @@ def webhook_whatsapp():
     elif stage == 'awaiting_message':
         conversa['message'] = body
         conversa['stage'] = 'finished'
-        conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+        
         msg.body(texts["final_thanks"])
         
         # Manter conversa para histórico (em produção, salve no banco)
