@@ -190,9 +190,17 @@ def registrar_lead_qualificado(lead_info):
         print(f"⚠️ Erro ao salvar lead qualificado: {e}")
         return False  # aqui sim faz sentido parar, pq não salvou
 
-    # =====================================
-    # ALERTA LEAD QUALIFICADO POR EMAIL
-    # =====================================
+    # Email NÃO é mais enviado aqui — só no estágio final da conversa
+    # (ver enviar_alerta_email, chamado quando a conversa é concluída).
+    return True
+
+
+def enviar_alerta_email(lead_info, canal="WhatsApp"):
+    """
+    Envia o alerta de lead qualificado por email (Resend).
+    Chamado APENAS quando a conversa chega ao estágio final.
+    Email é best-effort: falhas são ignoradas.
+    """
     try:
         destinatarios = [
             "booking@allycar.com",
@@ -200,7 +208,7 @@ def registrar_lead_qualificado(lead_info):
             "higor@allycar.com"
         ]
 
-        conteudo = f"""Novo lead qualificado (WhatsApp)
+        conteudo = f"""Novo lead qualificado ({canal})
 
 Data/Hora: {lead_info["timestamp"]}
 Nome: {lead_info["name"]}
@@ -234,8 +242,18 @@ Mensagem:
     except Exception as e:
         print(f"⚠️ Erro ao enviar alerta por email (ignorado): {e}")
 
-    # Se chegou aqui, salvou na planilha. Email é best-effort.
-    return True
+
+def _finalizar_alerta(conversa, lead_info, canal):
+    """
+    Envia o alerta por email apenas quando a conversa está concluída,
+    garantindo que seja enviado uma única vez por conversa.
+    """
+    if conversa.get('completed') and not conversa.get('email_sent'):
+        info = dict(lead_info)
+        info['category'] = conversa.get('category', lead_info.get('category'))
+        info['message'] = conversa.get('message', lead_info.get('message'))
+        enviar_alerta_email(info, canal=canal)
+        conversa['email_sent'] = True
 
 # =====================================
 # WEBHOOK - RECEBER RESPOSTAS
@@ -364,10 +382,11 @@ def webhook_whatsapp():
         'timestamp': conversa['timestamp']
     }
 
+    # Registra TODA mensagem na planilha (o email é enviado só no final da conversa)
     try:
         registrar_lead_qualificado(lead_info)
     except Exception as e:
-        print(f"⚠️ Falha ao notificar lead (ignorado): {e}")
+        print(f"⚠️ Falha ao registrar lead na planilha (ignorado): {e}")
         
     # Verificar se existe conversa ativa
     if conversation_key not in conversations:
@@ -392,6 +411,7 @@ def webhook_whatsapp():
         conversa['interested'] = True
         conversa['stage'] = 'finished'
         conversa['completed'] = True
+        _finalizar_alerta(conversa, lead_info, canal="SMS")
         return str(resp)
 
     # Atalho global: cliente pede para falar com consultor a qualquer momento
@@ -481,6 +501,9 @@ def webhook_whatsapp():
         conversa['stage'] = 'finished'
         msg.body(texts["final_thanks"])
         conversa['completed'] = True
+
+    # Envia o alerta por email só quando a conversa foi concluída (uma vez)
+    _finalizar_alerta(conversa, lead_info, canal="WhatsApp")
 
     return str(resp)
 
