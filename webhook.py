@@ -414,12 +414,16 @@ def webhook_whatsapp():
         _finalizar_alerta(conversa, lead_info, canal="SMS")
         return str(resp)
 
-    # Atalho global: cliente pede para falar com consultor a qualquer momento
+    # Atalho global: cliente pede para falar com consultor a qualquer momento.
+    # Pedir consultor já qualifica o lead → conversa concluída + alerta por email.
     if body.strip().upper() in ("CONSULTOR", "ASESOR", "ATENDENTE", "AGENTE"):
         conversa['interested'] = True
         conversa['category'] = 'Falar com consultor'
-        conversa['stage'] = 'awaiting_message'
+        conversa['message'] = 'Cliente solicitou falar com um consultor.'
+        conversa['stage'] = 'finished'
+        conversa['completed'] = True
         msg.body(texts["consultor_intro"])
+        _finalizar_alerta(conversa, lead_info, canal="WhatsApp")
         return str(resp)
 
     # Estágio 1: Aguardando categoria
@@ -429,7 +433,9 @@ def webhook_whatsapp():
         if categoria == 'consultor':
             conversa['interested'] = True
             conversa['category'] = 'Falar com consultor'
-            conversa['stage'] = 'awaiting_message'
+            conversa['message'] = 'Cliente solicitou falar com um consultor.'
+            conversa['stage'] = 'finished'
+            conversa['completed'] = True
             msg.body(texts["consultor_intro"])
 
         elif categoria:
