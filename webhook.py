@@ -280,9 +280,7 @@ Use o formato DD/MM/AAAA (ex: 15/07/2026):""",
         "no_availability": """Não encontramos veículos disponíveis nessa categoria para as datas informadas. 😔
 
 Mas não se preocupe — responda *CONSULTOR* que um de nossos atendentes vai buscar alternativas para você!""",
-        "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨
-
-_Valores já incluem impostos. Sujeitos a confirmação e disponibilidade._""",
+        "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨""",
     },
     "es": {
         "start_wait": "Hola! Para comenzar, espera nuestro mensaje inicial.",
@@ -322,9 +320,7 @@ Usa el formato DD/MM/AAAA (ej: 15/07/2026):""",
         "no_availability": """No encontramos vehículos disponibles en esa categoría para las fechas indicadas. 😔
 
 ¡Pero no te preocupes! Responde *ASESOR* y uno de nuestros agentes buscará alternativas para ti.""",
-        "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨
-
-_Los precios ya incluyen impuestos. Sujetos a confirmación y disponibilidad._""",
+        "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨""",
     }
 }
 
