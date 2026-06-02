@@ -28,6 +28,141 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 # Armazenar estado das conversas (em produção, use banco de dados)
 conversations = {}
 
+# =====================================
+# CONFIGURAÇÃO API HQ RENTAL (disponibilidade + preços)
+# =====================================
+HQ_API_HOST = "https://api-america-miami.caagcrm.com"
+HQ_API_AUTH = os.getenv(
+    "HQ_API_AUTH",
+    "Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA=",
+)
+HQ_BRAND_ID = os.getenv("HQ_BRAND_ID", "1")
+HQ_PICKUP_LOCATION = os.getenv("HQ_PICKUP_LOCATION", "3")
+HQ_DEFAULT_TIME = "10:00"   # horário fixo de retirada/devolução
+HQ_CURRENCY = "USD"
+
+
+def _parse_data(texto):
+    """Tenta interpretar uma data digitada pelo cliente. Retorna datetime ou None."""
+    texto = texto.strip()
+    formatos = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d/%m", "%d-%m"]
+    for fmt in formatos:
+        try:
+            dt = datetime.strptime(texto, fmt)
+            # Se o ano não foi informado, assume o próximo ano possível
+            if dt.year == 1900:
+                hoje = datetime.now()
+                dt = dt.replace(year=hoje.year)
+                if dt.date() < hoje.date():
+                    dt = dt.replace(year=hoje.year + 1)
+            return dt
+        except ValueError:
+            continue
+    return None
+
+
+def _extrair_assentos(features):
+    """Extrai o número de assentos a partir da lista de features do veículo."""
+    for f in features or []:
+        label = (f.get("label") or "").lower()
+        if "seat" in label or "assento" in label or "plaza" in label:
+            numeros = "".join(c if c.isdigit() else " " for c in label).split()
+            if numeros:
+                return int(numeros[0])
+    return None
+
+
+def consultar_disponibilidade(pick_up_date, return_date, seats=None, top_n=3):
+    """
+    Consulta a API HQ por disponibilidade e preços.
+    pick_up_date / return_date: strings yyyy-mm-dd
+    seats: int (5, 7, 8) para filtrar por categoria, ou None para todos
+    Retorna lista de dicts: {label, seats, daily, total, image, quantity}
+    """
+    payload = {
+        "pick_up_date": pick_up_date,
+        "return_date": return_date,
+        "pick_up_time": HQ_DEFAULT_TIME,
+        "return_time": HQ_DEFAULT_TIME,
+        "brand_id": HQ_BRAND_ID,
+        "pick_up_location": HQ_PICKUP_LOCATION,
+        "return_location": HQ_PICKUP_LOCATION,
+        "currency": HQ_CURRENCY,
+    }
+    headers = {"Authorization": HQ_API_AUTH, "Content-Type": "application/json"}
+
+    try:
+        r = requests.post(
+            f"{HQ_API_HOST}/api-america-miami/car-rental/reservations/dates",
+            json=payload, headers=headers, timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"⚠️ HQ disponibilidade HTTP {r.status_code}: {r.text[:200]}")
+            return []
+        classes = r.json().get("data", {}).get("applicable_classes", [])
+    except Exception as e:
+        print(f"⚠️ Erro ao consultar disponibilidade: {e}")
+        return []
+
+    resultados = []
+    for c in classes:
+        avail = c.get("availability", {})
+        if not avail.get("selectable") or avail.get("quantity", 0) <= 0:
+            continue
+
+        vc = c.get("vehicle_class", {})
+        n_assentos = _extrair_assentos(vc.get("features"))
+
+        # Filtro por assentos (8 = 8 ou mais)
+        if seats is not None and n_assentos is not None:
+            if seats >= 8:
+                if n_assentos < 8:
+                    continue
+            elif n_assentos != seats:
+                continue
+
+        try:
+            preco = c["price"]
+            total = float(preco["base_price_with_taxes"]["amount"])
+            daily = preco["details"][0]["base_daily_price_with_taxes"]["amount_for_display"]
+            total_fmt = preco["base_price_with_taxes"]["amount_for_display"]
+        except (KeyError, IndexError, ValueError):
+            continue
+
+        resultados.append({
+            "label": vc.get("label", "Veículo"),
+            "seats": n_assentos,
+            "daily": daily,
+            "total": total_fmt,
+            "total_raw": total,
+            "image": vc.get("image", ""),
+            "quantity": avail.get("quantity", 0),
+        })
+
+    resultados.sort(key=lambda x: x["total_raw"])
+    return resultados[:top_n]
+
+
+def _formatar_resultados(resultados, lang, pickup_str, return_str):
+    """Monta a mensagem de WhatsApp com as opções encontradas."""
+    if lang == "es":
+        cabecalho = f"🔎 Opciones disponibles del *{pickup_str}* al *{return_str}*:\n"
+        rotulo_dia = "/día"
+        rotulo_total = "Total"
+    else:
+        cabecalho = f"🔎 Opções disponíveis de *{pickup_str}* a *{return_str}*:\n"
+        rotulo_dia = "/dia"
+        rotulo_total = "Total"
+
+    linhas = [cabecalho]
+    for i, r in enumerate(resultados, 1):
+        assentos = f"{r['seats']} " + ("plazas" if lang == "es" else "lugares") if r.get("seats") else ""
+        linhas.append(
+            f"\n*{i}. {r['label']}* {('· ' + assentos) if assentos else ''}\n"
+            f"   💵 {r['daily']}{rotulo_dia}  |  {rotulo_total}: {r['total']}"
+        )
+    return "\n".join(linhas)
+
 import smtplib
 from email.message import EmailMessage
 import os
@@ -133,7 +268,21 @@ Por favor, escolha uma opção:
 
 Um de nossos consultores entrará em contato em instantes!
 
-Tenha um ótimo dia! 🚗✨"""
+Tenha um ótimo dia! 🚗✨""",
+        "ask_pickup_date": """Ótima escolha! 🚗
+
+Para qual *data de retirada* você precisa do carro?
+Use o formato DD/MM/AAAA (ex: 15/07/2026):""",
+        "ask_return_date": "E qual a *data de devolução*? (ex: 20/07/2026):",
+        "invalid_date": "Não consegui entender a data. 😅\nPor favor, use o formato DD/MM/AAAA (ex: 15/07/2026):",
+        "invalid_date_range": "A data de devolução precisa ser *depois* da retirada. Por favor, informe a data de devolução novamente:",
+        "date_in_past": "Essa data já passou. 😬 Por favor, informe uma data de retirada futura (DD/MM/AAAA):",
+        "no_availability": """Não encontramos veículos disponíveis nessa categoria para as datas informadas. 😔
+
+Mas não se preocupe — responda *CONSULTOR* que um de nossos atendentes vai buscar alternativas para você!""",
+        "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨
+
+_Valores já incluem impostos. Sujeitos a confirmação e disponibilidade._""",
     },
     "es": {
         "start_wait": "Hola! Para comenzar, espera nuestro mensaje inicial.",
@@ -161,7 +310,21 @@ Por favor, elige una opción:
 
 Uno de nuestros asesores se pondrá en contacto contigo en breve.
 
-¡Que tengas un excelente día! 🚗✨"""
+¡Que tengas un excelente día! 🚗✨""",
+        "ask_pickup_date": """¡Excelente elección! 🚗
+
+¿Para qué *fecha de recogida* necesitas el auto?
+Usa el formato DD/MM/AAAA (ej: 15/07/2026):""",
+        "ask_return_date": "¿Y la *fecha de devolución*? (ej: 20/07/2026):",
+        "invalid_date": "No pude entender la fecha. 😅\nPor favor, usa el formato DD/MM/AAAA (ej: 15/07/2026):",
+        "invalid_date_range": "La fecha de devolución debe ser *posterior* a la de recogida. Por favor, indica la fecha de devolución nuevamente:",
+        "date_in_past": "Esa fecha ya pasó. 😬 Por favor, indica una fecha de recogida futura (DD/MM/AAAA):",
+        "no_availability": """No encontramos vehículos disponibles en esa categoría para las fechas indicadas. 😔
+
+¡Pero no te preocupes! Responde *ASESOR* y uno de nuestros agentes buscará alternativas para ti.""",
+        "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨
+
+_Los precios ya incluyen impuestos. Sujetos a confirmación y disponibilidad._""",
     }
 }
 
@@ -193,7 +356,7 @@ def webhook_whatsapp():
 
     conversa = conversations[conversation_key]
     lang = conversa.get("language", "pt")
-    texts = MESSAGES[lang]
+    texts = MESSAGES.get(lang, MESSAGES["pt"])
     stage = conversa['stage']
     conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -223,35 +386,95 @@ def webhook_whatsapp():
         return str(resp)
     
     # ===== FLUXO DE CONVERSA =====
-    
+
+    # Atalho global: cliente pede para falar com consultor a qualquer momento
+    if body.strip().upper() in ("CONSULTOR", "ASESOR", "ATENDENTE", "AGENTE"):
+        conversa['interested'] = True
+        conversa['category'] = 'Falar com consultor'
+        conversa['stage'] = 'awaiting_message'
+        msg.body(texts["consultor_intro"])
+        return str(resp)
+
     # Estágio 1: Aguardando categoria
     if stage == 'awaiting_category':
         categoria = processar_escolha_categoria(body)
-        
+
         if categoria == 'consultor':
             conversa['interested'] = True
             conversa['category'] = 'Falar com consultor'
-            conversa['stage'] = 'awaiting_message'         
-            msg.body(texts["consultor_intro"])
-            
-        elif categoria:
-            conversa['category'] = categoria
             conversa['stage'] = 'awaiting_message'
-            msg.body(texts["ask_details"])
-            
+            msg.body(texts["consultor_intro"])
+
+        elif categoria:
+            # categoria = '5', '7' ou '8' (assentos)
+            conversa['category'] = categoria
+            conversa['seats'] = int(categoria)
+            conversa['stage'] = 'awaiting_pickup_date'
+            msg.body(texts["ask_pickup_date"])
+
         else:
             msg.body(texts["invalid_option"])
-        
-    # Estágio 3: Aguardando mensagem do cliente
+
+    # Estágio 2: Aguardando data de retirada
+    elif stage == 'awaiting_pickup_date':
+        dt = _parse_data(body)
+        if not dt:
+            msg.body(texts["invalid_date"])
+        elif dt.date() < datetime.now().date():
+            msg.body(texts["date_in_past"])
+        else:
+            conversa['pickup_date'] = dt.strftime("%Y-%m-%d")
+            conversa['pickup_display'] = dt.strftime("%d/%m/%Y")
+            conversa['stage'] = 'awaiting_return_date'
+            msg.body(texts["ask_return_date"])
+
+    # Estágio 3: Aguardando data de devolução + consulta de disponibilidade
+    elif stage == 'awaiting_return_date':
+        dt = _parse_data(body)
+        if not dt:
+            msg.body(texts["invalid_date"])
+        else:
+            pickup = datetime.strptime(conversa['pickup_date'], "%Y-%m-%d")
+            if dt.date() <= pickup.date():
+                msg.body(texts["invalid_date_range"])
+            else:
+                return_date = dt.strftime("%Y-%m-%d")
+                conversa['return_date'] = return_date
+                conversa['return_display'] = dt.strftime("%d/%m/%Y")
+
+                resultados = consultar_disponibilidade(
+                    conversa['pickup_date'], return_date, seats=conversa.get('seats')
+                )
+
+                if resultados:
+                    corpo = _formatar_resultados(
+                        resultados, lang,
+                        conversa['pickup_display'], conversa['return_display'],
+                    )
+                    corpo += "\n" + texts["results_footer"]
+                    msg.body(corpo)
+                    conversa['message'] = (
+                        f"Consultou disponibilidade: {conversa.get('seats')} assentos, "
+                        f"{conversa['pickup_display']} → {conversa['return_display']}. "
+                        f"{len(resultados)} opções apresentadas."
+                    )
+                else:
+                    msg.body(texts["no_availability"])
+                    conversa['message'] = (
+                        f"Consultou disponibilidade SEM resultados: {conversa.get('seats')} assentos, "
+                        f"{conversa['pickup_display']} → {conversa['return_display']}."
+                    )
+
+                conversa['stage'] = 'finished'
+                conversa['completed'] = True
+
+    # Estágio final: aguardando mensagem livre do cliente
     elif stage == 'awaiting_message':
         conversa['message'] = body
         conversa['stage'] = 'finished'
-        
         msg.body(texts["final_thanks"])
-        
-        # Manter conversa para histórico (em produção, salve no banco)
         conversa['completed'] = True
-    
+
     return str(resp)
 
 def processar_escolha_categoria(body):
