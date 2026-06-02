@@ -264,9 +264,7 @@ MESSAGES = {
         "start_wait": "Olá! Para iniciar, aguarde o envio da nossa mensagem.",
         "consultor_intro": """Perfeito! 👏
 
-Um consultor entrará em contato em breve.
-
-Por favor, nos conte um pouco sobre o que você procura (modelo, valor, prazo, etc):""",
+Um consultor entrará em contato em breve.""",
         "ask_details": """Excelente! 🎉
 
 Por favor, nos conte um pouco sobre o que você procura:
@@ -298,15 +296,15 @@ Use o formato DD/MM/AAAA (ex: 15/07/2026):""",
         "no_availability": """Não encontramos veículos disponíveis nessa categoria para as datas informadas. 😔
 
 Mas não se preocupe — responda *CONSULTOR* que um de nossos atendentes vai buscar alternativas para você!""",
-        "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨""",
+        "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨
+
+_Impostos e taxas podem ser aplicados._""",
     },
     "es": {
         "start_wait": "Hola! Para comenzar, espera nuestro mensaje inicial.",
         "consultor_intro": """¡Perfecto! 👏
 
-Un asesor se pondrá en contacto contigo en breve.
-
-Cuéntanos un poco sobre lo que estás buscando (modelo, presupuesto, fechas, etc.):""",
+Un asesor se pondrá en contacto contigo en breve.""",
         "ask_details": """¡Excelente! 🎉
 
 Cuéntanos un poco más sobre lo que estás buscando:
@@ -338,7 +336,9 @@ Usa el formato DD/MM/AAAA (ej: 15/07/2026):""",
         "no_availability": """No encontramos vehículos disponibles en esa categoría para las fechas indicadas. 😔
 
 ¡Pero no te preocupes! Responde *ASESOR* y uno de nuestros agentes buscará alternativas para ti.""",
-        "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨""",
+        "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨
+
+_Pueden aplicarse impuestos y tasas._""",
     }
 }
 
