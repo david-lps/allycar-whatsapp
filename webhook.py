@@ -383,6 +383,17 @@ def webhook_whatsapp():
     
     # ===== FLUXO DE CONVERSA =====
 
+    # Resposta via SMS: não roda o fluxo de disponibilidade (somente WhatsApp).
+    # Apenas confirma o recebimento e encerra; o lead já foi notificado acima.
+    if not from_number.startswith("whatsapp:"):
+        msg.body(
+            "Thank you for your reply! One of our consultants will contact you shortly. - Allycar"
+        )
+        conversa['interested'] = True
+        conversa['stage'] = 'finished'
+        conversa['completed'] = True
+        return str(resp)
+
     # Atalho global: cliente pede para falar com consultor a qualquer momento
     if body.strip().upper() in ("CONSULTOR", "ASESOR", "ATENDENTE", "AGENTE"):
         conversa['interested'] = True
