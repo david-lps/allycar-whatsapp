@@ -524,6 +524,61 @@ def processar_escolha_categoria(body):
 
     return None
 
+
+@app.route('/sms-webhook', methods=['POST'])
+def sms_webhook():
+    """
+    Recebe respostas via SMS (Twilio). Fluxo simples: registra na planilha,
+    avisa o cliente que um consultor entrará em contato e dispara o alerta
+    por email. NÃO roda o fluxo de disponibilidade (exclusivo do WhatsApp).
+    """
+    from_number = request.form.get('From', '')
+    body = request.form.get('Body', '').strip()
+    print(f"📥 SMS recebido de {from_number}: {body}")
+
+    resp = MessagingResponse()
+    msg = resp.message()
+
+    phone_plain = from_number.replace('whatsapp:', '').strip()
+
+    # Reaproveita o estado da conversa se já existir (nome, idioma, dedupe de email)
+    conversa = (
+        conversations.get(from_number)
+        or conversations.get(phone_plain)
+        or conversations.get(f"whatsapp:{phone_plain}")
+    )
+    if conversa is None:
+        conversa = conversations.setdefault(
+            from_number,
+            {'name': 'Não informado', 'stage': 'sms', 'language': 'pt', 'interested': True},
+        )
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lead_info = {
+        'name': conversa.get('name', 'Não informado'),
+        'phone': phone_plain,
+        'category': 'Resposta via SMS',
+        'message': body,
+        'timestamp': timestamp,
+    }
+    conversa['timestamp'] = timestamp
+    conversa['message'] = body
+
+    # Registra TODA mensagem na planilha
+    try:
+        registrar_lead_qualificado(lead_info)
+    except Exception as e:
+        print(f"⚠️ Falha ao registrar SMS na planilha (ignorado): {e}")
+
+    # SMS é considerado estágio final → dispara o email (uma vez por conversa)
+    conversa['completed'] = True
+    _finalizar_alerta(conversa, lead_info, canal="SMS")
+
+    msg.body(
+        "Thank you for your reply! One of our consultants will contact you shortly. - Allycar"
+    )
+    return str(resp)
+
 # =====================================
 # ROTAS DE INTEGRAÇÃO
 # =====================================
