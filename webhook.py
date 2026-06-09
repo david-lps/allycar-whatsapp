@@ -1080,6 +1080,11 @@ def _json_resp(payload, status=200):
     return _cors_transfer(app.response_class(
         response=json.dumps(payload), status=status, mimetype="application/json"))
 
+def _fmt_usd_hq(value):
+    """Formata float no estilo da HQ: 1599.63 -> '$1.599,63' (ponto milhar, vírgula decimal)."""
+    s = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"${s}"
+
 
 @app.route('/api/transfer/availability', methods=['POST', 'OPTIONS'])
 def transfer_availability():
@@ -1117,22 +1122,27 @@ def transfer_availability():
         svc      = d.get("selected_vehicle_class") or {}
         price    = svc.get("price", {}) or {}
         base     = price.get("base_price", {}) or {}
-        with_tax = price.get("base_price_with_taxes", {}) or {}
+        # Total que o cliente realmente paga = base + cobranças obrigatórias + impostos.
+        grand    = price.get("total_price_with_mandatory_charges_and_taxes", {}) or {}
+        fallback = price.get("base_price_with_taxes", {}) or {}
         det      = (price.get("details") or [{}])[0]
 
         if not svc or not base.get("amount_for_display"):
             return _json_resp({"available": False, "reason": "no_price"}, 200)
 
-        # Quebra de impostos (ex.: Florida Sales Tax 6.5%) p/ mostrar no resumo.
-        taxes = []
-        for t in (d.get("applicable_taxes") or []):
-            amt = t.get("total_amount") or {}
-            if t.get("name") and amt.get("amount_for_display"):
-                taxes.append({"name": t.get("name"), "amount": amt.get("amount_for_display")})
+        # "Taxes & fees" = total - base (sempre fecha com o total; engloba o
+        # Florida Sales Tax 6.5% + cobranças obrigatórias). Mostrar uma linha de
+        # imposto "exata" não fecharia, pois a HQ taxa base+cobranças.
+        total_disp = grand.get("amount_for_display") or fallback.get("amount_for_display")
+        total_raw  = grand.get("amount") or fallback.get("amount")
+        fees_disp = None
+        try:
+            fees_raw = round(float(total_raw) - float(base.get("amount") or 0), 2)
+            if fees_raw > 0:
+                fees_disp = _fmt_usd_hq(fees_raw)
+        except (TypeError, ValueError):
+            pass
 
-        # Disponibilidade real (van livre x ocupada) não vem deste endpoint;
-        # a confirmação na HQ rejeita conflito de horário. v1: tratamos como
-        # disponível e deixamos o /confirm validar.
         return _json_resp({
             "available":        True,
             "vehicle_class_id": svc.get("vehicle_class_id"),
@@ -1140,9 +1150,9 @@ def transfer_availability():
             "hours":            det.get("hours"),
             "days":             det.get("days"),
             "price_base":       base.get("amount_for_display"),
-            "price_total":      with_tax.get("amount_for_display"),
-            "price_total_raw":  with_tax.get("amount"),
-            "taxes":            taxes,
+            "price_fees":       fees_disp,
+            "price_total":      total_disp,
+            "price_total_raw":  total_raw,
         }, 200)
     except Exception as e:
         print(f"[transfer/availability] erro: {e}")
