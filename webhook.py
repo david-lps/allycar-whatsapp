@@ -1048,6 +1048,246 @@ Nascimento: {data.get('customer_birthdate')}
         return _cors(response)
 
 # =====================================
+# TRANSFER — RESERVA DAS VANS (chauffeur) VIA HQ RENTAL
+# As vans ficam numa vehicle class própria na HQ. Estes endpoints
+# FORÇAM essa classe no servidor: o site de transfer nunca consegue
+# reservar outra categoria. Pagamento sai pelo Stripe configurado na HQ
+# (o /confirm devolve o payment_link).
+# =====================================
+HQ_VANS_VEHICLE_CLASS_ID    = os.getenv("HQ_VANS_VEHICLE_CLASS_ID", "19")   # Mercedes Sprinter 2500
+HQ_VANS_BRAND_ID            = os.getenv("HQ_VANS_BRAND_ID", HQ_BRAND_ID)
+HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", HQ_PICKUP_LOCATION)
+HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_STRIPE_PAYMENT_METHOD_ID", "4")   # gateway Stripe da brand AllyCar
+
+# Origens permitidas para o fluxo de reserva (inclui localhost p/ dev).
+TRANSFER_ALLOWED_ORIGINS = {
+    "https://www.allycar.com",
+    "https://allycar.com",
+    "http://localhost:4321",
+    "http://localhost:4323",
+}
+
+def _cors_transfer(response):
+    origin = request.headers.get("Origin", "")
+    response.headers["Access-Control-Allow-Origin"] = origin if origin in TRANSFER_ALLOWED_ORIGINS else ALLOWED_ORIGIN
+    response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+def _json_resp(payload, status=200):
+    import json
+    return _cors_transfer(app.response_class(
+        response=json.dumps(payload), status=status, mimetype="application/json"))
+
+
+@app.route('/api/transfer/availability', methods=['POST', 'OPTIONS'])
+def transfer_availability():
+    """Preço (por hora/diária) da van via `additional-charges`.
+
+    IMPORTANTE: usamos `additional-charges` (e não `reservations/dates`) porque
+    a van fica com `available_on_website=False` na HQ — assim ela NÃO aparece no
+    widget do site normal (mesma brand), mas continua reservável direto pela
+    classe (HQ_VANS_VEHICLE_CLASS_ID). `additional-charges` devolve o preço por
+    hora ($250) ou diária ($1.500, até 8h) já calculado pela HQ.
+    """
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    try:
+        data = request.get_json(force=True) or {}
+        params = {
+            "pick_up_date":     data.get("pick_up_date"),
+            "return_date":      data.get("return_date"),
+            "pick_up_time":     data.get("pick_up_time", HQ_DEFAULT_TIME),
+            "return_time":      data.get("return_time", HQ_DEFAULT_TIME),
+            "brand_id":         HQ_VANS_BRAND_ID,
+            "pick_up_location": HQ_VANS_LOCATION_ID,
+            "return_location":  HQ_VANS_LOCATION_ID,
+            "vehicle_class_id": HQ_VANS_VEHICLE_CLASS_ID,
+        }
+        r = requests.get(
+            f"{HQ_API_BASE}/car-rental/reservations/additional-charges",
+            headers={"Authorization": HQ_API_TOKEN},
+            params=params, timeout=20,
+        )
+        if r.status_code != 200:
+            return _json_resp({"available": False, "error": f"HQ {r.status_code}", "detail": r.text[:300]}, 502)
+
+        d        = r.json().get("data", {}) or {}
+        svc      = d.get("selected_vehicle_class") or {}
+        price    = svc.get("price", {}) or {}
+        base     = price.get("base_price", {}) or {}
+        with_tax = price.get("base_price_with_taxes", {}) or {}
+        det      = (price.get("details") or [{}])[0]
+
+        if not svc or not base.get("amount_for_display"):
+            return _json_resp({"available": False, "reason": "no_price"}, 200)
+
+        # Disponibilidade real (van livre x ocupada) não vem deste endpoint;
+        # a confirmação na HQ rejeita conflito de horário. v1: tratamos como
+        # disponível e deixamos o /confirm validar.
+        return _json_resp({
+            "available":        True,
+            "vehicle_class_id": svc.get("vehicle_class_id"),
+            "label":            "Mercedes-Benz Sprinter",
+            "hours":            det.get("hours"),
+            "days":             det.get("days"),
+            "price_base":       base.get("amount_for_display"),
+            "price_total":      with_tax.get("amount_for_display"),
+            "price_total_raw":  with_tax.get("amount"),
+        }, 200)
+    except Exception as e:
+        print(f"[transfer/availability] erro: {e}")
+        return _json_resp({"available": False, "error": str(e)}, 500)
+
+
+@app.route('/api/transfer/customer', methods=['POST', 'OPTIONS'])
+def transfer_customer():
+    """Cria o contato na HQ (classe = vans). License/nascimento opcionais."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    import http.client, json
+    try:
+        data = request.get_json(force=True) or {}
+        fields = {
+            'contact_entity':   'person',
+            'first_name':       data.get('first_name', ''),
+            'last_name':        data.get('last_name', ''),
+            'email':            data.get('email', ''),
+            'phone_number':     data.get('phone_number', ''),
+            'birthdate':        data.get('birthdate', ''),
+            'pick_up_date':     data.get('pick_up_date', ''),
+            'return_date':      data.get('return_date', ''),
+            'pick_up_location': HQ_VANS_LOCATION_ID,
+            'return_location':  HQ_VANS_LOCATION_ID,
+            'brand_id':         HQ_VANS_BRAND_ID,
+            'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
+        }
+        # A HQ exige DL Number (field_254) para criar o contato. No transfer o
+        # cliente NÃO dirige (motorista é da Allycar), então mandamos um
+        # placeholder quando não vier do formulário.
+        fields['field_254'] = data.get('license_number') or 'CHAUFFEUR-SERVICE'
+
+        boundary = 'HQBoundary1234567890'
+        body_parts = []
+        for key, value in fields.items():
+            if value:
+                body_parts.append(
+                    f'--{boundary}\r\n'
+                    f'Content-Disposition: form-data; name="{key}"\r\n\r\n'
+                    f'{value}'
+                )
+        body_bytes = ('\r\n'.join(body_parts) + f'\r\n--{boundary}--').encode('utf-8')
+
+        conn = http.client.HTTPSConnection(HQ_BASE)
+        conn.request('POST', f'{HQ_PATH}/car-rental/reservations/customer', body_bytes, {
+            'Authorization':  HQ_API_TOKEN,
+            'Content-Type':   f'multipart/form-data; boundary={boundary}',
+            'Content-Length': str(len(body_bytes)),
+        })
+        res = conn.getresponse()
+        resp_text = res.read().decode('utf-8')
+        try:
+            resp_json = json.loads(resp_text)
+        except Exception:
+            resp_json = {'error': resp_text}
+
+        # A HQ devolve o id do cliente em data.customer.id (e também em
+        # data.reservation.customer_id). NÃO existe data.contact_id aqui.
+        _data = resp_json.get('data', {}) or {}
+        contact_id = (
+            (_data.get('customer') or {}).get('id')
+            or (_data.get('reservation') or {}).get('customer_id')
+            or _data.get('contact_id')
+        )
+        out = {'contact': {'id': contact_id}, 'original': resp_json} if contact_id else resp_json
+        return _cors_transfer(app.response_class(
+            response=json.dumps(out), status=res.status, mimetype='application/json'))
+    except Exception as e:
+        print(f'[transfer/customer] erro: {e}')
+        return _json_resp({'success': False, 'message': str(e)}, 500)
+
+
+@app.route('/api/transfer/confirm', methods=['POST', 'OPTIONS'])
+def transfer_confirm():
+    """Confirma a reserva da van e devolve o payment_link (Stripe via HQ)."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    try:
+        data = request.get_json(force=True) or {}
+        params = {
+            'pick_up_date':       data.get('pick_up_date'),
+            'return_date':        data.get('return_date'),
+            'pick_up_time':       data.get('pick_up_time'),
+            'return_time':        data.get('return_time'),
+            'brand_id':           HQ_VANS_BRAND_ID,
+            'pick_up_location':   HQ_VANS_LOCATION_ID,
+            'return_location':    HQ_VANS_LOCATION_ID,
+            'vehicle_class_id':   HQ_VANS_VEHICLE_CLASS_ID,
+            'customer_id':        data.get('customer_id'),
+            'customer_first_name': data.get('customer_first_name'),
+            'customer_last_name':  data.get('customer_last_name'),
+            'customer_email':      data.get('customer_email'),
+            'customer_birthdate':  data.get('customer_birthdate'),
+            'additional_charges[]': '',
+            'return_payment_link': 'true',
+        }
+        if HQ_STRIPE_PAYMENT_METHOD_ID:
+            params['payment_method_id'] = HQ_STRIPE_PAYMENT_METHOD_ID
+        # DL Number obrigatório na HQ; placeholder pois o cliente não dirige.
+        params['customer_driver_license_number'] = data.get('customer_driver_license_number') or 'CHAUFFEUR-SERVICE'
+        params = {k: v for k, v in params.items() if v is not None}
+
+        resp = requests.post(
+            f'{HQ_API_BASE}/car-rental/reservations/confirm',
+            headers={'Authorization': HQ_API_TOKEN},
+            params=params,
+            timeout=20,
+        )
+        try:
+            j = resp.json()
+        except Exception:
+            j = {'raw': resp.text}
+        payment_link = (
+            (j.get('data', {}) or {}).get('payment_link')
+            or j.get('payment_link')
+            or ((j.get('data', {}) or {}).get('payment', {}) or {}).get('link')
+        )
+
+        if resp.status_code in (200, 201):
+            try:
+                requests.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
+                             "Content-Type": "application/json"},
+                    json={
+                        "from": "Allycar <booking@allycar.com>",
+                        "to": ["higor@allycar.com", "david@allycar.com"],
+                        "subject": f"🚐 Nova reserva VAN/transfer: {data.get('customer_first_name')} {data.get('customer_last_name')}",
+                        "text": (
+                            f"Pick-up: {data.get('pick_up_date')} {data.get('pick_up_time')}\n"
+                            f"Return: {data.get('return_date')} {data.get('return_time')}\n"
+                            f"Endereço de retirada: {data.get('pickup_address') or '—'}\n"
+                            f"Cliente: {data.get('customer_first_name')} {data.get('customer_last_name')} "
+                            f"- {data.get('customer_email')}\n"
+                            f"Payment link: {payment_link}"
+                        ),
+                    },
+                    timeout=10,
+                )
+            except Exception as e:
+                print(f"[transfer/confirm] email ignorado: {e}")
+
+        return _json_resp(
+            {'status': resp.status_code, 'payment_link': payment_link, 'reservation': j},
+            resp.status_code or 200,
+        )
+    except Exception as e:
+        print(f'[transfer/confirm] erro: {e}')
+        return _json_resp({'success': False, 'message': str(e)}, 500)
+
+
+# =====================================
 # EXECUÇÃO
 # =====================================
 
