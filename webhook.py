@@ -1248,10 +1248,13 @@ def transfer_confirm():
             j = resp.json()
         except Exception:
             j = {'raw': resp.text}
+        # A HQ devolve o link do Stripe em data.transaction.payment_link.
+        _cd = j.get('data', {}) or {}
         payment_link = (
-            (j.get('data', {}) or {}).get('payment_link')
+            (_cd.get('transaction') or {}).get('payment_link')
+            or _cd.get('payment_link')
             or j.get('payment_link')
-            or ((j.get('data', {}) or {}).get('payment', {}) or {}).get('link')
+            or ((_cd.get('payment') or {}).get('link'))
         )
 
         if resp.status_code in (200, 201):
