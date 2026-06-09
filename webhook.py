@@ -1123,6 +1123,13 @@ def transfer_availability():
         if not svc or not base.get("amount_for_display"):
             return _json_resp({"available": False, "reason": "no_price"}, 200)
 
+        # Quebra de impostos (ex.: Florida Sales Tax 6.5%) p/ mostrar no resumo.
+        taxes = []
+        for t in (d.get("applicable_taxes") or []):
+            amt = t.get("total_amount") or {}
+            if t.get("name") and amt.get("amount_for_display"):
+                taxes.append({"name": t.get("name"), "amount": amt.get("amount_for_display")})
+
         # Disponibilidade real (van livre x ocupada) não vem deste endpoint;
         # a confirmação na HQ rejeita conflito de horário. v1: tratamos como
         # disponível e deixamos o /confirm validar.
@@ -1135,6 +1142,7 @@ def transfer_availability():
             "price_base":       base.get("amount_for_display"),
             "price_total":      with_tax.get("amount_for_display"),
             "price_total_raw":  with_tax.get("amount"),
+            "taxes":            taxes,
         }, 200)
     except Exception as e:
         print(f"[transfer/availability] erro: {e}")
