@@ -298,6 +298,8 @@ Use o formato DD/MM/AAAA (ex: 15/07/2026):""",
 Mas não se preocupe — responda *CONSULTOR* que um de nossos atendentes vai buscar alternativas para você!""",
         "results_footer": """\nGostou de alguma opção? Responda *CONSULTOR* e um de nossos atendentes assume a conversa para finalizar sua reserva! 🚗✨
 
+📍 Atuamos em Orlando e num raio de até 30 milhas.
+
 _Impostos e taxas podem ser aplicados._""",
     },
     "es": {
@@ -337,6 +339,8 @@ Usa el formato DD/MM/AAAA (ej: 15/07/2026):""",
 
 ¡Pero no te preocupes! Responde *ASESOR* y uno de nuestros agentes buscará alternativas para ti.""",
         "results_footer": """\n¿Te gustó alguna opción? Responde *ASESOR* y uno de nuestros agentes continuará la conversación para finalizar tu reserva. 🚗✨
+
+📍 Operamos en Orlando y en un radio de hasta 30 millas.
 
 _Pueden aplicarse impuestos y tasas._""",
     }
