@@ -346,6 +346,45 @@ _Pueden aplicarse impuestos y tasas._""",
     }
 }
 
+def _variantes_telefone(from_number):
+    """
+    Gera variações da chave para localizar a conversa apesar de quirks de DDI:
+    - México: +52 1 XXXX  <->  +52 XXXX (o '1' de celular)
+    - Argentina: +54 9 XXXX  <->  +54 XXXX (o '9' de celular)
+    Considera também com e sem o prefixo 'whatsapp:'.
+    """
+    num = (from_number or "").replace("whatsapp:", "")
+    variantes = set()
+
+    def add(n):
+        variantes.add(n)
+        variantes.add(f"whatsapp:{n}")
+
+    add(num)
+
+    # México (+52)
+    if num.startswith("+521"):
+        add("+52" + num[4:])
+    elif num.startswith("+52"):
+        add("+521" + num[3:])
+
+    # Argentina (+54)
+    if num.startswith("+549"):
+        add("+54" + num[4:])
+    elif num.startswith("+54"):
+        add("+549" + num[3:])
+
+    return variantes
+
+
+def encontrar_conversa_key(from_number):
+    """Retorna a chave da conversa existente (testando variações) ou None."""
+    for k in _variantes_telefone(from_number):
+        if k in conversations:
+            return k
+    return None
+
+
 @app.route('/webhook/whatsapp', methods=['POST'])
 def webhook_whatsapp():
     """Recebe mensagens dos clientes via Twilio"""
@@ -364,16 +403,30 @@ def webhook_whatsapp():
     resp = MessagingResponse()
     msg = resp.message()
 
-    # Normaliza chave para funcionar com WhatsApp e SMS
-    conversation_key = from_number
+    # Localiza a conversa tratando variações de DDI (México/Argentina) e prefixo
+    conversation_key = encontrar_conversa_key(from_number)
+    conversa = conversations.get(conversation_key) if conversation_key else None
 
-    if conversation_key not in conversations and not from_number.startswith("whatsapp:"):
-        whatsapp_key = f"whatsapp:{from_number}"
-        if whatsapp_key in conversations:
-            conversation_key = whatsapp_key
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Verificar se existe conversa ativa ANTES de acessar o estado (evita KeyError)
-    if conversation_key not in conversations:
+    # Monta o lead com o que temos (funciona mesmo sem conversa registrada)
+    lead_info = {
+        'name': conversa.get('name', 'Não informado') if conversa else 'Não informado',
+        'phone': (from_number or '').replace('whatsapp:', ''),
+        'category': conversa.get('category', 'Não especificado') if conversa else 'Primeiro contato',
+        'message': body,
+        'timestamp': timestamp,
+    }
+
+    # Registra TODA mensagem na planilha — inclusive primeiros contatos sem
+    # conversa registrada (importante para rastrear leads de números não mapeados)
+    try:
+        registrar_lead_qualificado(lead_info)
+    except Exception as e:
+        print(f"⚠️ Falha ao registrar lead na planilha (ignorado): {e}")
+
+    # Sem conversa ativa: já registramos o lead acima; responde e encerra (sem crashar)
+    if conversa is None:
         msg.body(
             "Olá! 👋\n"
             "Por favor, aguarde nossa mensagem inicial para continuar.\n\n"
@@ -384,25 +437,10 @@ def webhook_whatsapp():
         )
         return str(resp)
 
-    conversa = conversations[conversation_key]
     lang = conversa.get("language", "pt")
     texts = MESSAGES.get(lang, MESSAGES["pt"])
     stage = conversa['stage']
-    conversa['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    lead_info = {
-        'name': conversa['name'],
-        'phone': from_number.replace('whatsapp:', ''),
-        'category': conversa.get('category', 'Não especificado'),
-        'message': body,
-        'timestamp': conversa['timestamp']
-    }
-
-    # Registra TODA mensagem na planilha (o email é enviado só no final da conversa)
-    try:
-        registrar_lead_qualificado(lead_info)
-    except Exception as e:
-        print(f"⚠️ Falha ao registrar lead na planilha (ignorado): {e}")
+    conversa['timestamp'] = timestamp
 
     # ===== FLUXO DE CONVERSA =====
 
