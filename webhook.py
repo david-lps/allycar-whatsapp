@@ -372,6 +372,18 @@ def webhook_whatsapp():
         if whatsapp_key in conversations:
             conversation_key = whatsapp_key
 
+    # Verificar se existe conversa ativa ANTES de acessar o estado (evita KeyError)
+    if conversation_key not in conversations:
+        msg.body(
+            "Olá! 👋\n"
+            "Por favor, aguarde nossa mensagem inicial para continuar.\n\n"
+            "Hello! 👋\n"
+            "Please wait for our initial message to continue.\n\n"
+            "¡Hola! 👋\n"
+            "Por favor, espere nuestro mensaje inicial para continuar."
+        )
+        return str(resp)
+
     conversa = conversations[conversation_key]
     lang = conversa.get("language", "pt")
     texts = MESSAGES.get(lang, MESSAGES["pt"])
@@ -391,19 +403,7 @@ def webhook_whatsapp():
         registrar_lead_qualificado(lead_info)
     except Exception as e:
         print(f"⚠️ Falha ao registrar lead na planilha (ignorado): {e}")
-        
-    # Verificar se existe conversa ativa
-    if conversation_key not in conversations:
-        msg.body(
-            "Olá! 👋\n"
-            "Por favor, aguarde nossa mensagem inicial para continuar.\n\n"
-            "Hello! 👋\n"
-            "Please wait for our initial message to continue.\n\n"
-            "¡Hola! 👋\n"
-            "Por favor, espere nuestro mensaje inicial para continuar."
-        )
-        return str(resp)
-    
+
     # ===== FLUXO DE CONVERSA =====
 
     # Resposta via SMS: não roda o fluxo de disponibilidade (somente WhatsApp).
