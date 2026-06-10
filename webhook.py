@@ -349,6 +349,7 @@ _Pueden aplicarse impuestos y tasas._""",
 def _variantes_telefone(from_number):
     """
     Gera variações da chave para localizar a conversa apesar de quirks de DDI:
+    - Brasil: +55 DD 9XXXXXXXX  <->  +55 DD XXXXXXXX (o nono dígito do celular)
     - México: +52 1 XXXX  <->  +52 XXXX (o '1' de celular)
     - Argentina: +54 9 XXXX  <->  +54 XXXX (o '9' de celular)
     Considera também com e sem o prefixo 'whatsapp:'.
@@ -361,6 +362,15 @@ def _variantes_telefone(from_number):
         variantes.add(f"whatsapp:{n}")
 
     add(num)
+
+    # Brasil (+55): nono dígito do celular fica DEPOIS do DDD
+    if num.startswith("+55") and len(num) >= 5:
+        ddd = num[3:5]
+        local = num[5:]
+        if len(local) == 9 and local.startswith("9"):
+            add("+55" + ddd + local[1:])    # remove o 9
+        elif len(local) == 8:
+            add("+55" + ddd + "9" + local)  # adiciona o 9
 
     # México (+52)
     if num.startswith("+521"):
