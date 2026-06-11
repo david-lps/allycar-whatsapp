@@ -1,12 +1,11 @@
-name: Allycar – Trigger Send (every 2h)
+name: Allycar – Trigger Send (every 20min)
 
 on:
   schedule:
     # GitHub Actions uses UTC
     # Brazil (UTC-3): 11, 13, 15, 17, 19
     # UTC:            14, 16, 18, 20, 22
-    - cron: "0 14,16,18,20,22 * * *"
-  workflow_dispatch:
+     - cron: "*/20 * * * *"
 
 jobs:
   trigger_send:
