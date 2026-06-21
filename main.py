@@ -1,3 +1,21 @@
+# ============================================================
+# Força conexões via IPv4.
+# O host de produção (Railway) não possui rota IPv6 funcional, então
+# conexões a serviços que resolvem para IPv6 (ex: oauth2.googleapis.com,
+# usado pelo Google Sheets) falham com "[Errno 101] Network is unreachable".
+# Forçar IPv4 em socket.getaddrinfo resolve isso globalmente.
+# ============================================================
+import socket as _socket
+_orig_getaddrinfo = _socket.getaddrinfo
+
+
+def _getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, _socket.AF_INET, type, proto, flags)
+
+
+_socket.getaddrinfo = _getaddrinfo_ipv4_only
+# ============================================================
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.rest import Client
