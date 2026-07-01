@@ -666,6 +666,36 @@ def register_conversation():
         return {'status': 'error', 'message': str(e)}, 500
 
 
+@app.route('/trigger-retargeting', methods=['GET', 'POST'])
+def trigger_retargeting():
+    """
+    Dispara a campanha de retargeting (guia 'Retargeting' da planilha).
+    Registra cada lead como conversa em estágio final, de modo que a resposta
+    do cliente caia no fluxo existente (agradecimento + alerta por email) e
+    seja registrada em Leads_Qualificados como já acontece hoje.
+    """
+    try:
+        import retargeting
+
+        def _registrar_conversa(phone, name, language):
+            conversations[phone] = {
+                'name': name,
+                'city': 'Não informado',
+                'stage': 'awaiting_message',
+                'category': 'Retargeting - Parcelamento/PIX',
+                'interested': True,
+                'language': language,
+            }
+
+        resumo = retargeting.enviar_campanha_retargeting(
+            registrar_conversa=_registrar_conversa
+        )
+        return {'status': 'success', 'resumo': resumo}, 200
+    except Exception as e:
+        print(f"❌ Erro na campanha de retargeting: {e}")
+        return {'status': 'error', 'message': str(e)}, 500
+
+
 @app.route('/conversations', methods=['GET'])
 def get_conversations():
     """Ver conversas ativas (para debug)"""
