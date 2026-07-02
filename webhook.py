@@ -252,7 +252,14 @@ def _finalizar_alerta(conversa, lead_info, canal):
     if conversa.get('completed') and not conversa.get('email_sent'):
         info = dict(lead_info)
         info['category'] = conversa.get('category', lead_info.get('category'))
-        info['message'] = conversa.get('message', lead_info.get('message'))
+
+        mensagem = conversa.get('message', lead_info.get('message'))
+        historico = conversa.get('historico')
+        if historico:
+            transcricao = "\n".join(f"• {m}" for m in historico)
+            mensagem = f"{mensagem}\n\n--- O que o cliente escreveu ---\n{transcricao}"
+        info['message'] = mensagem
+
         enviar_alerta_email(info, canal=canal)
         conversa['email_sent'] = True
 
@@ -453,6 +460,10 @@ def webhook_whatsapp():
     stage = conversa['stage']
     conversa['timestamp'] = timestamp
 
+    # Acumula tudo que o cliente escreve, para o contexto completo no alerta
+    if body:
+        conversa.setdefault('historico', []).append(body)
+
     # ===== FLUXO DE CONVERSA =====
 
     # Resposta via SMS: não roda o fluxo de disponibilidade (somente WhatsApp).
@@ -539,10 +550,16 @@ def webhook_whatsapp():
                     )
                     corpo += "\n" + texts["results_footer"]
                     msg.body(corpo)
+                    carros_str = "\n".join(
+                        f"- {r['label']}"
+                        + (f" ({r['seats']} lugares)" if r.get('seats') else "")
+                        + f": {r['daily']}/dia | total {r['total']}"
+                        for r in resultados
+                    )
                     conversa['message'] = (
                         f"Consultou disponibilidade: {conversa.get('seats')} assentos, "
                         f"{conversa['pickup_display']} → {conversa['return_display']}. "
-                        f"{len(resultados)} opções apresentadas."
+                        f"{len(resultados)} opções apresentadas:\n{carros_str}"
                     )
                 else:
                     msg.body(texts["no_availability"])
