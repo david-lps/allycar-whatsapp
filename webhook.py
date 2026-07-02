@@ -205,7 +205,8 @@ def enviar_alerta_email(lead_info, canal="WhatsApp"):
         destinatarios = [
             "booking@allycar.com",
             "david@allycar.com",
-            "higor@allycar.com"
+            "higor@allycar.com",
+            "bruno@allycar.com"
         ]
 
         conteudo = f"""Novo lead qualificado ({canal})
