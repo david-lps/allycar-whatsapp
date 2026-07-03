@@ -254,8 +254,10 @@ def _finalizar_alerta(conversa, lead_info, canal):
         info['category'] = conversa.get('category', lead_info.get('category'))
 
         mensagem = conversa.get('message', lead_info.get('message'))
-        historico = conversa.get('historico')
-        if historico:
+        historico = conversa.get('historico') or []
+        # Só anexa a transcrição se ela agregar contexto além da própria mensagem
+        # (evita repetição quando a única resposta do cliente já é a mensagem)
+        if historico and not (len(historico) == 1 and historico[0] == mensagem):
             transcricao = "\n".join(f"• {m}" for m in historico)
             mensagem = f"{mensagem}\n\n--- O que o cliente escreveu ---\n{transcricao}"
         info['message'] = mensagem
