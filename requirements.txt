@@ -10,6 +10,7 @@ pytz
 requests
 gunicorn
 anthropic
+psycopg2-binary
 google-api-python-client
 google-auth
 google-auth-oauthlib

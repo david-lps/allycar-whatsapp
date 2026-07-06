@@ -2,7 +2,8 @@
 webhook_agent.py — Camada de I/O do agente consultivo (Flask + Twilio).
 
 ISOLADO da produção (webhook.py/main.py intactos). Rota nova /webhook/agent.
-Estado próprio (conversations_agent). Reaproveita só leitura do main.py.
+Estado das conversas persistido via agent_store (Postgres, ou memória se não
+houver DATABASE_URL). Reaproveita só leitura do main.py.
 
 Fluxo assíncrono (o agente com Opus pode passar do timeout de ~15s do Twilio):
   1. Recebe a mensagem do cliente e responde 200 vazio na hora (ack).
@@ -31,8 +32,11 @@ from main import (
     enviar_mensagem_inicial_com_opcoes,  # EUA: reaproveita o email+SMS da produção
 )
 import main_agent
+import agent_store
 
 load_dotenv()
+
+agent_store.init_db()  # cria a tabela se houver DATABASE_URL (senão, memória)
 
 app = Flask(__name__)
 
@@ -49,8 +53,7 @@ def _template_sid(language):
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# Estado próprio do agente (em memória — persistência é fase futura)
-conversations_agent = {}
+# Estado das conversas: persistido via agent_store (Postgres, ou memória se sem banco)
 
 # Países hispano-falantes (mesma lógica de idioma da produção)
 PAISES_ES = {
@@ -115,11 +118,13 @@ def _variantes_telefone(from_number):
     return variantes
 
 
-def _encontrar_conversa_key(from_number):
+def _encontrar_conversa(from_number):
+    """Procura a conversa (testando variações de telefone) no store. (key, conversa) ou (None, None)."""
     for k in _variantes_telefone(from_number):
-        if k in conversations_agent:
-            return k
-    return None
+        c = agent_store.carregar(k)
+        if c is not None:
+            return k, c
+    return None, None
 
 
 # ------- efeitos: registro na planilha e alerta de escalonamento -------
@@ -178,10 +183,10 @@ Motivo: {conversa.get('motivo_escalonamento', '')}
 # ------- processamento assíncrono (thread de fundo) -------
 def _processar(from_number, body):
     try:
-        key = _encontrar_conversa_key(from_number) or from_number
-        conversa = conversations_agent.setdefault(
-            key, {"name": "Cliente", "phone": from_number.replace("whatsapp:", ""), "history": []}
-        )
+        key, conversa = _encontrar_conversa(from_number)
+        if conversa is None:
+            key = from_number
+            conversa = {"name": "Cliente", "phone": from_number.replace("whatsapp:", ""), "history": []}
 
         resultado = main_agent.responder_agente(conversa, body)
         texto = resultado["texto"]
@@ -204,6 +209,8 @@ def _processar(from_number, body):
         # Email com a conversa completa quando o cliente reserva ou pede humano
         if resultado["reservou"] or resultado["escalar"]:
             _enviar_email_conversa(lead_info, conversa)
+
+        agent_store.salvar(key, conversa)  # persiste o estado após o turno
 
     except Exception as e:
         print(f"❌ Erro no processamento do agente: {e}")
@@ -256,10 +263,10 @@ def enviar_inicial():
     except Exception as e:
         return {"error": str(e)}, 500
 
-    conversations_agent[to] = {
+    agent_store.salvar(to, {
         "name": name, "phone": phone.replace("whatsapp:", ""),
         "language": language, "history": [],
-    }
+    })
     return {"status": "enviado", "sid": msg.sid, "to": to}, 200
 
 
@@ -338,10 +345,10 @@ def _disparar_leads_agente():
                 from_=TWILIO_WHATSAPP_NUMBER, to=telefone_fmt,
                 content_sid=sid, content_variables=json.dumps({"1": nome}),
             )
-            conversations_agent[telefone_fmt] = {
+            agent_store.salvar(telefone_fmt, {
                 "name": nome, "phone": telefone_fmt.replace("whatsapp:", ""),
                 "language": language, "history": [],
-            }
+            })
             sheet.update_cell(idx, col_status, "Sent")
             enviados += 1
             print(f"✅ [agente] enviado para {nome} ({telefone_fmt}) [{language}]")
@@ -369,7 +376,8 @@ def agent_trigger_send():
 def health():
     return {
         "status": "ok",
-        "conversas": len(conversations_agent),
+        "conversas": agent_store.contar(),
+        "persistencia": "postgres" if agent_store.ATIVO else "memoria",
         "modelo": main_agent.MODELO,
         "template_br": bool(AGENT_TEMPLATE_SID_BR),
         "template_es": bool(AGENT_TEMPLATE_SID_ES),
@@ -385,10 +393,9 @@ def agent_chat():
     message = (data.get("message") or "").strip()
     if not message:
         return {"error": "message vazio"}, 400
-    conversa = conversations_agent.setdefault(
-        session, {"name": "Cliente", "phone": session, "history": []}
-    )
+    conversa = agent_store.carregar(session) or {"name": "Cliente", "phone": session, "history": []}
     resultado = main_agent.responder_agente(conversa, message)
+    agent_store.salvar(session, conversa)
     return {
         "reply": resultado["texto"],
         "reservou": resultado["reservou"],
@@ -400,7 +407,7 @@ def agent_chat():
 def agent_chat_reset():
     data = request.get_json(force=True, silent=True) or {}
     session = (data.get("session") or "teste-web").strip()
-    conversations_agent.pop(session, None)
+    agent_store.deletar(session)
     return {"status": "reset", "session": session}, 200
 
 
