@@ -132,7 +132,7 @@ def enviar_mensagem_inicial_com_opcoes(telefone, nome, pais, email_cliente=None)
         # 🇺🇸 USA → EMAIL
         # ===============================
         if pais_norm in ["usa", "united states", "estados unidos", "eua"]:
-            if not email_cliente and not telefone_cliente:
+            if not email_cliente and not telefone:
                 print(f"⚠️ USA sem email e sem telefone para {nome}, pulando envio")
                 return False, "USA sem email e sem telefone"
         
