@@ -28,6 +28,7 @@ from main import (
     esta_no_horario_comercial,
     descobrir_pais_por_telefone,
     cliente_ja_tem_reserva,
+    enviar_mensagem_inicial_com_opcoes,  # EUA: reaproveita o email+SMS da produção
 )
 import main_agent
 
@@ -57,6 +58,9 @@ PAISES_ES = {
     "uruguai", "uruguay", "equador", "ecuador", "paraguai", "paraguay",
     "guatemala", "bolivia", "bolívia", "venezuela",
 }
+
+# EUA: mesmo tratamento da produção (email + SMS em inglês, não WhatsApp)
+PAISES_USA = {"usa", "united states", "estados unidos", "eua"}
 
 
 def _idioma_por_pais(pais):
@@ -301,6 +305,27 @@ def _disparar_leads_agente():
         except Exception as e:
             print(f"⚠️ Falha ao checar reserva HQ de {nome}: {e}")
 
+        # EUA → email + SMS em inglês (mesma função da produção, sem WhatsApp/agente)
+        if (pais or "").strip().lower() in PAISES_USA:
+            email_cliente = str(lead.get("EMAIL", "")).strip()
+            try:
+                sucesso, resultado = enviar_mensagem_inicial_com_opcoes(
+                    telefone_fmt, nome, pais, email_cliente
+                )
+                if sucesso:
+                    sheet.update_cell(idx, col_status, "Sent")
+                    enviados += 1
+                    print(f"✅ [agente/EUA] email+SMS para {nome}")
+                else:
+                    sheet.update_cell(idx, col_status, f"Error: {str(resultado)[:80]}")
+                    erros += 1
+            except Exception as e:
+                sheet.update_cell(idx, col_status, f"Error: {str(e)[:80]}")
+                erros += 1
+            time.sleep(2)
+            continue
+
+        # Brasil / LATAM → WhatsApp com o agente
         language = _idioma_por_pais(pais)
         sid = _template_sid(language)
         if not sid:
