@@ -13,6 +13,7 @@ Fluxo assíncrono (o agente com Opus pode passar do timeout de ~15s do Twilio):
 
 import os
 import json
+import time
 import threading
 from datetime import datetime
 
@@ -21,7 +22,13 @@ from dotenv import load_dotenv
 import requests
 from twilio.rest import Client
 
-from main import conectar_google_sheets, formatar_telefone
+from main import (
+    conectar_google_sheets,
+    formatar_telefone,
+    esta_no_horario_comercial,
+    descobrir_pais_por_telefone,
+    cliente_ja_tem_reserva,
+)
 import main_agent
 
 load_dotenv()
@@ -43,6 +50,38 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # Estado próprio do agente (em memória — persistência é fase futura)
 conversations_agent = {}
+
+# Países hispano-falantes (mesma lógica de idioma da produção)
+PAISES_ES = {
+    "argentina", "colombia", "colômbia", "mexico", "méxico", "chile", "peru",
+    "uruguai", "uruguay", "equador", "ecuador", "paraguai", "paraguay",
+    "guatemala", "bolivia", "bolívia", "venezuela",
+}
+
+
+def _idioma_por_pais(pais):
+    return "es" if (pais or "").strip().lower() in PAISES_ES else "pt"
+
+
+def _transcricao(conversa):
+    """Monta o texto legível da conversa (só falas do cliente e do agente)."""
+    linhas = []
+    for m in conversa.get("history", []):
+        role = m.get("role")
+        content = m.get("content")
+        if role == "user" and isinstance(content, str):
+            linhas.append(f"Cliente: {content}")
+        elif role == "assistant":
+            if isinstance(content, list):
+                txt = "".join(
+                    getattr(b, "text", "") for b in content
+                    if getattr(b, "type", None) == "text"
+                ).strip()
+                if txt:
+                    linhas.append(f"Agente: {txt}")
+            elif isinstance(content, str) and content.strip():
+                linhas.append(f"Agente: {content.strip()}")
+    return "\n".join(linhas)
 
 
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
@@ -92,16 +131,27 @@ def _registrar_planilha(lead_info):
         print(f"⚠️ Falha ao registrar lead (agente): {e}")
 
 
-def _alertar_escalonamento(lead_info, motivo):
+def _enviar_email_conversa(lead_info, conversa):
+    """Envia à equipe o alerta com a CONVERSA COMPLETA (uma vez por conversa)."""
+    if conversa.get("email_enviado"):
+        return
     try:
-        conteudo = f"""Atendimento do agente escalado para humano (WhatsApp)
+        reservou = bool(conversa.get("reservou"))
+        assunto = (
+            "🔥 Agente Allycar: cliente PRONTO para reservar (finalizar pagamento)"
+            if reservou else
+            "🧑‍💼 Agente Allycar: cliente pede atendimento humano"
+        )
+        conteudo = f"""Lead do agente (WhatsApp)
 
 Data/Hora: {lead_info['timestamp']}
+Nome: {lead_info['name']}
 Telefone: {lead_info['phone']}
-Motivo: {motivo}
+Situação: {lead_info['category']}
+Motivo: {conversa.get('motivo_escalonamento', '')}
 
-Última mensagem do cliente:
-{lead_info['message']}
+--- Conversa completa ---
+{_transcricao(conversa)}
 """
         requests.post(
             "https://api.resend.com/emails",
@@ -109,14 +159,16 @@ Motivo: {motivo}
                      "Content-Type": "application/json"},
             json={
                 "from": "Allycar <booking@allycar.com>",
-                "to": ["booking@allycar.com", "david@allycar.com", "bruno@allycar.com"],
-                "subject": "🧑‍💼 Agente Allycar: cliente pede atendimento humano",
+                "to": ["booking@allycar.com", "david@allycar.com",
+                       "higor@allycar.com", "bruno@allycar.com"],
+                "subject": assunto,
                 "text": conteudo,
             },
             timeout=10,
         )
+        conversa["email_enviado"] = True
     except Exception as e:
-        print(f"⚠️ Falha ao alertar escalonamento (agente): {e}")
+        print(f"⚠️ Falha ao enviar email da conversa (agente): {e}")
 
 
 # ------- processamento assíncrono (thread de fundo) -------
@@ -145,8 +197,9 @@ def _processar(from_number, body):
         }
         _registrar_planilha(lead_info)
 
-        if resultado["escalar"]:
-            _alertar_escalonamento(lead_info, conversa.get("motivo_escalonamento", ""))
+        # Email com a conversa completa quando o cliente reserva ou pede humano
+        if resultado["reservou"] or resultado["escalar"]:
+            _enviar_email_conversa(lead_info, conversa)
 
     except Exception as e:
         print(f"❌ Erro no processamento do agente: {e}")
@@ -204,6 +257,87 @@ def enviar_inicial():
         "language": language, "history": [],
     }
     return {"status": "enviado", "sid": msg.sid, "to": to}, 200
+
+
+def _disparar_leads_agente():
+    """
+    Lê os leads da planilha e dispara o template do agente — com a MESMA
+    verificação da produção: horário comercial por país, dados válidos e
+    checagem de reserva ativa na HQ (pula quem já é cliente com reserva).
+    Registra a conversa (com nome/idioma) para as respostas caírem no agente.
+    """
+    print("🚀 [agente] iniciando disparo de leads...")
+    sheet = conectar_google_sheets()
+    leads = sheet.get_all_records()
+    headers = sheet.row_values(1)
+    col_status = headers.index("STATUS") + 1
+
+    enviados = erros = pulados = 0
+    for idx, lead in enumerate(leads, start=2):  # linha 1 = cabeçalho
+        nome = str(lead.get("NOME", "")).strip()
+        telefone = str(lead.get("TELEFONE", "")).strip()
+        status = str(lead.get("STATUS", "")).strip()
+
+        if status:  # já processado (evita reenvio; produção usa 'Sent')
+            pulados += 1
+            continue
+        if not nome or not telefone:
+            sheet.update_cell(idx, col_status, "Error - dados incompletos")
+            erros += 1
+            continue
+
+        pais = descobrir_pais_por_telefone(telefone)
+        if not esta_no_horario_comercial(pais):
+            print(f"⏰ Fora do horário de {pais} — pulando {nome}")
+            pulados += 1
+            continue
+
+        telefone_fmt = formatar_telefone(telefone)  # whatsapp:+...
+        try:
+            if cliente_ja_tem_reserva(telefone_fmt):
+                sheet.update_cell(idx, col_status, "Skipped - já tem reserva")
+                pulados += 1
+                continue
+        except Exception as e:
+            print(f"⚠️ Falha ao checar reserva HQ de {nome}: {e}")
+
+        language = _idioma_por_pais(pais)
+        sid = _template_sid(language)
+        if not sid:
+            sheet.update_cell(idx, col_status, f"Error - sem template {language}")
+            erros += 1
+            continue
+
+        try:
+            twilio_client.messages.create(
+                from_=TWILIO_WHATSAPP_NUMBER, to=telefone_fmt,
+                content_sid=sid, content_variables=json.dumps({"1": nome}),
+            )
+            conversations_agent[telefone_fmt] = {
+                "name": nome, "phone": telefone_fmt.replace("whatsapp:", ""),
+                "language": language, "history": [],
+            }
+            sheet.update_cell(idx, col_status, "Sent")
+            enviados += 1
+            print(f"✅ [agente] enviado para {nome} ({telefone_fmt}) [{language}]")
+        except Exception as e:
+            sheet.update_cell(idx, col_status, f"Error: {str(e)[:80]}")
+            erros += 1
+        time.sleep(2)  # respeita limites do Twilio
+
+    resumo = {"enviados": enviados, "erros": erros, "pulados": pulados}
+    print(f"🏁 [agente] disparo concluído: {resumo}")
+    return resumo
+
+
+@app.route("/agent/trigger-send", methods=["GET", "POST"])
+def agent_trigger_send():
+    """Dispara os leads da planilha pelo agente (para o cron chamar)."""
+    try:
+        return {"status": "success", "resumo": _disparar_leads_agente()}, 200
+    except Exception as e:
+        print(f"❌ Erro no disparo do agente: {e}")
+        return {"status": "error", "message": str(e)}, 500
 
 
 @app.route("/agent/health", methods=["GET"])
