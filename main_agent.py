@@ -17,6 +17,7 @@ import os
 import json
 from datetime import datetime
 
+import pytz
 import anthropic
 
 # Reaproveita utilitários de leitura do main.py (import roda o patch de IPv4)
@@ -412,15 +413,27 @@ def responder_agente(conversa, mensagem_usuario, max_iteracoes=6):
     mensagens = list(history)
     texto_final = ""
 
+    # Contexto do dia (bloco volátil, SEM cache_control, após o prompt cacheado)
+    try:
+        hoje = datetime.now(pytz.timezone("America/New_York")).strftime("%d/%m/%Y")
+    except Exception:
+        hoje = datetime.now().strftime("%d/%m/%Y")
+    contexto_dia = (
+        f"Contexto do dia: hoje é {hoje} (horário de Orlando). "
+        "Quando o cliente informar uma data SEM o ano, assuma sempre a PRÓXIMA data futura "
+        "(nunca uma data passada). Envie as datas às ferramentas no formato yyyy-mm-dd. "
+        "O período mínimo de aluguel é de 2 dias. Se houver qualquer ambiguidade na data, "
+        "confirme com o cliente antes de cotar."
+    )
+
     for _ in range(max_iteracoes):
         resposta = client.messages.create(
             model=MODELO,
             max_tokens=1024,
-            system=[{
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }],
+            system=[
+                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": contexto_dia},
+            ],
             thinking={"type": "adaptive"},
             output_config={"effort": "low"},
             tools=TOOLS,
