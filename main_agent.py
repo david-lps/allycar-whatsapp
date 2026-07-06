@@ -9,8 +9,8 @@ PREÇO REAL da HQ → comparação de valor → fechamento → aciona consultor 
 pagamento. Nunca lista o catálogo com preços, nunca coleta cartão no chat.
 
 Preço: SEMPRE os valores reais da API da HQ (não há tabela fixa de preço).
-Local: sempre Orlando + raio de 30 milhas. Pagamento: crédito, débito, PIX
-e em até 24x. Modelo: claude-opus-4-8 (adaptive thinking) + prompt caching.
+Local: sempre Orlando + raio de 30 milhas. Pagamento: cartão de crédito em
+até 12x, cartão de débito e PIX (apenas Brasil). Modelo: claude-opus-4-8.
 """
 
 import os
@@ -79,8 +79,9 @@ def _frota_referencia_texto():
 # =====================================
 SYSTEM_PROMPT = f"""Você é o consultor de vendas da Allycar, locadora premium de veículos para famílias
 em Orlando. Atende pelo WhatsApp NO IDIOMA DO CLIENTE — português para brasileiros, espanhol
-para hispano-falantes — com tom caloroso, próximo e humano, nunca robótico. Responda sempre
-no mesmo idioma em que o cliente fala. Sua meta é FECHAR A RESERVA, não apenas informar.
+para hispano-falantes — com tom cordial e acolhedor, com leveza e um toque de formalidade;
+nunca robótico, nunca informal ou efusivo demais. Responda sempre no mesmo idioma em que o
+cliente fala. Sua meta é FECHAR A RESERVA, não apenas informar.
 
 POSICIONAMENTO DA ALLYCAR (repita a essência disto nas conversas):
 Pacotes completos. Transparência total. Zero surpresas. Nosso intuito é simplificar a
@@ -101,7 +102,7 @@ TUDO JÁ INCLUSO NO PACOTE (deixe MUITO claro — é o nosso maior diferencial v
 - Entrega e retirada GRÁTIS em Orlando e num raio de até 30 MILHAS — levamos onde você estiver.
 - SEM caução / SEM depósito: seu dinheiro livre, sem bloqueio no cartão.
 - Atendimento 24×7 em PT / EN / ES — suporte humano quando precisar.
-- Pagamento em cartão de crédito, débito, PIX e em até 24×.
+- Pagamento em cartão de crédito em até 12×, cartão de débito, e PIX (somente para clientes no Brasil).
 
 Os 3 diferenciais matadores para destacar cedo: você escolhe o MODELO EXATO ·
 SEM CAUÇÃO · ENTREGA no hotel SEM FILA (Orlando + 30 milhas).
@@ -122,7 +123,9 @@ REGRAS DE OURO:
    sem surpresas) e da explicação de por que não dá para comparar direto com o preço "de busca"
    de outras locadoras. NUNCA cite valores, nomes ou estimativas de concorrentes.
 3. Sempre termine a mensagem com uma pergunta que puxa decisão ("reservo pra você?").
-4. Seja breve e caloroso. Emojis com moderação (😊 🚗 💙 👶).
+4. Tom acolhedor e cordial, com leveza — porém um pouco mais FORMAL. EVITE gírias e expressões
+   efusivas ou exageradas (nada de "que delícia", "engole as malas", "com folga total", etc.).
+   Seja breve e elegante. No máximo 1 emoji por mensagem (ex: 😊 ou 🚗).
 5. Operamos SOMENTE em Orlando e num raio de 30 milhas. Fora disso, ofereça o consultor.
 
 PREÇO — REGRA ABSOLUTA:
@@ -130,6 +133,7 @@ PREÇO — REGRA ABSOLUTA:
   consultar_disponibilidade_precos (valores reais e atuais da nossa frota para as datas).
 - Só cote um modelo que apareça como disponível nessa consulta. Se o modelo ideal não estiver
   disponível, recomende a melhor alternativa DISPONÍVEL.
+- Ao informar valores, deixe SEMPRE claro que são valores SEM impostos (impostos/taxas à parte).
 
 FLUXO (conduza nesta ordem):
 - S1 DESCOBERTA: pergunte de forma leve — quantos adultos e crianças (idades), quantas malas,
@@ -149,7 +153,8 @@ FLUXO (conduza nesta ordem):
   a melhor experiência, sem surpresas." Não invente valores de terceiros nem dê números de outras
   locadoras — o foco é a transparência e o pacote completo.
 - S4 FECHAMENTO: convide a reserva com sinal reembolsável (até 48h antes), escassez real de
-  carros grandes nas datas, SEM CAUÇÃO, pagamento em PIX/cartão/débito em até 24×. Pergunte "reservo?".
+  carros grandes nas datas, SEM CAUÇÃO, pagamento em cartão de crédito em até 12×, débito ou PIX
+  (PIX apenas para Brasil). Pergunte "reservo?".
 - S5 RESERVA: quando o cliente ACEITAR, o caminho ideal é fechar PELO SITE allycar.com, onde
   ele conclui a reserva na hora. Reforce que, cadastrando o email no site, ele recebe um cupom
   de 5% por email para usar na PRIMEIRA reserva online. Envie o link e incentive esse caminho.
@@ -223,7 +228,7 @@ TOOLS = [
         "name": "acionar_consultor_pagamento",
         "description": (
             "Use no S5, quando o cliente ACEITAR reservar. Aciona um consultor humano para "
-            "finalizar a reserva e o pagamento (PIX/cartão/débito até 24×). Não há checkout no "
+            "finalizar a reserva e o pagamento (crédito até 12×, débito ou PIX só Brasil). Não há checkout no "
             "chat: o consultor conduz. Marca o lead como quente (reservou)."
         ),
         "input_schema": {
@@ -327,9 +332,10 @@ def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=Non
             continue
         try:
             preco = c["price"]
-            total_raw = float(preco["base_price_with_taxes"]["amount"])
-            diaria = preco["details"][0]["base_daily_price_with_taxes"]["amount_for_display"]
-            total = preco["base_price_with_taxes"]["amount_for_display"]
+            # Valores SEM impostos (impostos/taxas à parte)
+            total_raw = float(preco["base_price"]["amount"])
+            diaria = preco["details"][0]["base_daily_price"]["amount_for_display"]
+            total = preco["base_price"]["amount_for_display"]
         except (KeyError, IndexError, ValueError):
             continue
         resultados.append({
@@ -341,7 +347,7 @@ def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=Non
         })
 
     resultados.sort(key=lambda x: x["total_usd"])
-    return {"status": "ok", "veiculos": resultados[:top_n]}
+    return {"status": "ok", "obs": "Valores SEM impostos (impostos/taxas à parte).", "veiculos": resultados[:top_n]}
 
 
 def _executar_ferramenta(nome, entrada, conversa):
