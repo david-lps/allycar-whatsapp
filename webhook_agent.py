@@ -31,8 +31,13 @@ app = Flask(__name__)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")  # "whatsapp:+1..."
-# Template de entrada EXCLUSIVO do agente (novo SID, separado da produção)
-AGENT_TEMPLATE_SID = os.getenv("AGENT_TEMPLATE_SID")
+# Templates de entrada EXCLUSIVOS do agente (SIDs separados da produção), por idioma
+AGENT_TEMPLATE_SID_BR = os.getenv("AGENT_TEMPLATE_SID_BR") or os.getenv("AGENT_TEMPLATE_SID")
+AGENT_TEMPLATE_SID_ES = os.getenv("AGENT_TEMPLATE_SID_ES")
+
+
+def _template_sid(language):
+    return AGENT_TEMPLATE_SID_ES if (language or "").lower().startswith("es") else AGENT_TEMPLATE_SID_BR
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
@@ -179,15 +184,16 @@ def enviar_inicial():
     language = (data.get("language") or "pt").strip()
     if not phone:
         return {"error": "phone obrigatório"}, 400
-    if not AGENT_TEMPLATE_SID:
-        return {"error": "AGENT_TEMPLATE_SID não configurado no serviço do agente"}, 400
+    sid = _template_sid(language)
+    if not sid:
+        return {"error": f"template do agente não configurado para o idioma '{language}'"}, 400
 
     to = formatar_telefone(phone)  # whatsapp:+...
     try:
         msg = twilio_client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=to,
-            content_sid=AGENT_TEMPLATE_SID,
+            content_sid=sid,
             content_variables=json.dumps({"1": name}),
         )
     except Exception as e:
@@ -206,7 +212,8 @@ def health():
         "status": "ok",
         "conversas": len(conversations_agent),
         "modelo": main_agent.MODELO,
-        "template_configurado": bool(AGENT_TEMPLATE_SID),
+        "template_br": bool(AGENT_TEMPLATE_SID_BR),
+        "template_es": bool(AGENT_TEMPLATE_SID_ES),
     }, 200
 
 

@@ -92,8 +92,9 @@ def _frota_referencia_texto():
 # Frozen → prompt caching. Nada volátil aqui dentro.
 # =====================================
 SYSTEM_PROMPT = f"""Você é o consultor de vendas da Allycar, locadora premium de veículos para famílias
-brasileiras em Orlando. Atende pelo WhatsApp, em português, com tom caloroso, próximo e
-humano — nunca robótico. Sua meta é FECHAR A RESERVA, não apenas informar.
+em Orlando. Atende pelo WhatsApp NO IDIOMA DO CLIENTE — português para brasileiros, espanhol
+para hispano-falantes — com tom caloroso, próximo e humano, nunca robótico. Responda sempre
+no mesmo idioma em que o cliente fala. Sua meta é FECHAR A RESERVA, não apenas informar.
 
 POSICIONAMENTO DA ALLYCAR (repita a essência disto nas conversas):
 Pacotes completos. Transparência total. Zero surpresas. Nosso intuito é simplificar a
@@ -181,7 +182,7 @@ GUARDRAILS DE SEGURANÇA:
 - Nunca prometer disponibilidade sem checar → use a consulta antes de garantir.
 - Escalar para humano (escalar_para_humano) em: reclamação, pedido fora do padrão / fora de
   Orlando+30mi, ou quando o cliente pedir uma pessoa. Se o cliente escrever CONSULTOR /
-  ATENDENTE (ou pedir para falar com alguém), use escalar_para_humano.
+  ATENDENTE / ASESOR / AGENTE (ou pedir para falar com alguém), use escalar_para_humano.
 
 Mantenha as mensagens curtas (é WhatsApp) e sempre com uma pergunta que avança a venda."""
 
@@ -437,6 +438,14 @@ def responder_agente(conversa, mensagem_usuario, max_iteracoes=6):
         "O período mínimo de aluguel é de 2 dias. Se houver qualquer ambiguidade na data, "
         "confirme com o cliente antes de cotar."
     )
+    idioma = (conversa.get("language") or "").lower()
+    if idioma.startswith("es"):
+        contexto_dia += " O idioma do cliente é ESPANHOL — responda sempre em espanhol."
+    elif idioma.startswith("pt"):
+        contexto_dia += " O idioma do cliente é PORTUGUÊS — responda sempre em português."
+    else:
+        contexto_dia += " Responda no MESMO idioma em que o cliente escrever (português ou espanhol)."
+
     nome = (conversa.get("name") or "").strip()
     if nome and nome != "Cliente" and not nome.startswith("teste-web"):
         contexto_dia += f" O cliente se chama {nome} — trate-o pelo primeiro nome quando fizer sentido."
