@@ -66,20 +66,6 @@ FROTA = [
 ]
 FROTA_POR_MODELO = {c["modelo"]: c for c in FROTA}
 
-# Constantes editáveis do LADO AEROPORTO na comparação de valor (BRIEF seção 7).
-# O lado Allycar usa o PREÇO REAL da HQ.
-COMP = {
-    "base_suv_dia": 90,
-    "seguro_dia": 45,
-    "cadeirinha_dia": 16,
-    "cadeirinha_cap": 85,
-    "condutor_add_dia": 14,
-    "pedagio_dia": 15,
-    "taxa_percentual": 0.30,
-    "caucao_hold": "US$ 300–500 bloqueados no cartão",
-}
-
-
 def _frota_referencia_texto():
     linhas = ["| Modelo | Tipo | Lugares | Bagagem |", "|---|---|---|---|"]
     for c in FROTA:
@@ -132,8 +118,9 @@ SITE E CUPOM DE 5% (regra importante):
 REGRAS DE OURO:
 1. Consultor, não catálogo. NUNCA liste a frota inteira com preços. Pergunte primeiro,
    depois recomende UM carro.
-2. Preço nunca aparece sozinho — sempre com a comparação de custo total vs. locadora de
-   aeroporto (ferramenta calcular_comparacao_valor).
+2. Preço nunca aparece sozinho — sempre acompanhado do valor do PACOTE COMPLETO (tudo incluso,
+   sem surpresas) e da explicação de por que não dá para comparar direto com o preço "de busca"
+   de outras locadoras. NUNCA cite valores, nomes ou estimativas de concorrentes.
 3. Sempre termine a mensagem com uma pergunta que puxa decisão ("reservo pra você?").
 4. Seja breve e caloroso. Emojis com moderação (😊 🚗 💙 👶).
 5. Operamos SOMENTE em Orlando e num raio de 30 milhas. Fora disso, ofereça o consultor.
@@ -153,11 +140,14 @@ FLUXO (conduza nesta ordem):
   para ver o que está DISPONÍVEL com PREÇO REAL nas datas. Indique UM modelo (o melhor
   disponível). Reforce "você leva ESSE modelo exato, não 'categoria ou similar'". Apresente
   como "Pacote Família Tranquila", com tudo incluso.
-- S3 COMPARAÇÃO: com o preço real em mãos, use calcular_comparacao_valor e mostre a conta lado
-  a lado (Allycar tudo incluso vs. aeroporto com extras somados + caução + fila + inglês).
-  IMPORTANTE: o valor do aeroporto é uma ESTIMATIVA média — apresente sempre como aproximado
-  ("em média", "costuma custar cerca de ~US$X"), NUNCA como cotação exata de outra locadora.
-  Conclua: "vocês pagam menos E ganham a experiência premium."
+- S3 VALOR (NUNCA cite preço de concorrente): apresente o preço real da Allycar como o VALOR
+  FINAL, com TUDO já incluso e sem surpresas. Explique que não dá para comparar direto com o
+  preço "de busca" de outras locadoras: aquele valor baixo NÃO inclui seguro, cadeirinha,
+  pedágio nem condutor adicional — tudo isso é cobrado depois, no balcão — e ainda bloqueiam
+  uma caução no cartão. No nosso pacote já está TUDO dentro, sem custo extra e sem bloqueio.
+  Mensagem-chave: "quando você soma tudo o que já vem incluso, a Allycar é competitiva E entrega
+  a melhor experiência, sem surpresas." Não invente valores de terceiros nem dê números de outras
+  locadoras — o foco é a transparência e o pacote completo.
 - S4 FECHAMENTO: convide a reserva com sinal reembolsável (até 48h antes), escassez real de
   carros grandes nas datas, SEM CAUÇÃO, pagamento em PIX/cartão/débito em até 24×. Pergunte "reservo?".
 - S5 RESERVA: quando o cliente ACEITAR, o caminho ideal é fechar PELO SITE allycar.com, onde
@@ -226,23 +216,6 @@ TOOLS = [
                 "lugares": {"type": "integer", "description": "Assentos mínimos desejados (opcional)"},
             },
             "required": ["data_retirada", "data_devolucao"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "calcular_comparacao_valor",
-        "description": (
-            "Compara o custo total: Allycar (PREÇO REAL, tudo incluso) vs. locadora de aeroporto "
-            "(com extras somados + caução). Passe o total real da Allycar obtido na consulta de preços."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "allycar_total_usd": {"type": "number", "description": "Total real da Allycar (da consulta de preços)"},
-                "num_dias": {"type": "integer"},
-                "num_criancas": {"type": "integer"},
-            },
-            "required": ["allycar_total_usd", "num_dias", "num_criancas"],
             "additionalProperties": False,
         },
     },
@@ -371,36 +344,11 @@ def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=Non
     return {"status": "ok", "veiculos": resultados[:top_n]}
 
 
-def _calcular_comparacao_valor(allycar_total_usd, num_dias, num_criancas):
-    dias = max(int(num_dias or 1), 1)
-    criancas = max(int(num_criancas or 0), 0)
-    allycar_total = round(float(allycar_total_usd or 0), 2)
-
-    base = (COMP["base_suv_dia"] + COMP["seguro_dia"]
-            + COMP["condutor_add_dia"] + COMP["pedagio_dia"]) * dias
-    cadeirinha = min(COMP["cadeirinha_dia"] * dias, COMP["cadeirinha_cap"]) * criancas
-    bruto = (base + cadeirinha) * (1 + COMP["taxa_percentual"])
-    aeroporto_total = int(round(bruto / 50.0)) * 50  # arredonda p/ parecer estimativa, não cotação exata
-
-    return {
-        "num_dias": dias,
-        "allycar_total_usd": allycar_total,
-        "allycar_inclui": "tudo incluso, sem caução, entrega no hotel (30mi), PIX/cartão/débito até 24×",
-        "aeroporto_total_estimado_usd": aeroporto_total,
-        "aeroporto_extras": f"+ caução ({COMP['caucao_hold']}) + fila + atendimento em inglês + seguro/condutor/pedágio cobrados no balcão",
-        "economia_usd": max(aeroporto_total - allycar_total, 0),
-        "aviso": ("O valor do aeroporto é uma ESTIMATIVA média (não é cotação real de concorrente). "
-                  "Apresente como aproximado: 'em média cerca de ~US$X', nunca como um valor exato de outra locadora."),
-    }
-
-
 def _executar_ferramenta(nome, entrada, conversa):
     if nome == "recomendar_veiculo":
         return _recomendar_veiculo(**entrada), {}
     if nome == "consultar_disponibilidade_precos":
         return _consultar_disponibilidade_precos(**entrada), {}
-    if nome == "calcular_comparacao_valor":
-        return _calcular_comparacao_valor(**entrada), {}
     if nome == "acionar_consultor_pagamento":
         conversa["reservou"] = True
         conversa["escalar"] = True
