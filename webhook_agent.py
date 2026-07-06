@@ -168,6 +168,77 @@ def health():
     return {"status": "ok", "conversas": len(conversations_agent), "modelo": main_agent.MODELO}, 200
 
 
+# ------- teste conversacional pelo navegador (sem Twilio/WhatsApp) -------
+@app.route("/agent/chat", methods=["POST"])
+def agent_chat():
+    """Roda o agente de forma síncrona para testes. Body JSON: {session, message}."""
+    data = request.get_json(force=True, silent=True) or {}
+    session = (data.get("session") or "teste-web").strip()
+    message = (data.get("message") or "").strip()
+    if not message:
+        return {"error": "message vazio"}, 400
+    conversa = conversations_agent.setdefault(
+        session, {"name": "Cliente", "phone": session, "history": []}
+    )
+    resultado = main_agent.responder_agente(conversa, message)
+    return {
+        "reply": resultado["texto"],
+        "reservou": resultado["reservou"],
+        "escalar": resultado["escalar"],
+    }, 200
+
+
+@app.route("/agent/chat/reset", methods=["POST"])
+def agent_chat_reset():
+    data = request.get_json(force=True, silent=True) or {}
+    session = (data.get("session") or "teste-web").strip()
+    conversations_agent.pop(session, None)
+    return {"status": "reset", "session": session}, 200
+
+
+@app.route("/agent", methods=["GET"])
+def agent_ui():
+    """Página simples de chat para testar o agente."""
+    return _CHAT_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+_CHAT_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allycar — Teste do Consultor</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b141a;color:#e9edef;margin:0}
+  header{background:#202c33;padding:14px 18px;font-weight:600}
+  #chat{max-width:640px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:70vh}
+  .msg{max-width:80%;padding:9px 12px;border-radius:10px;white-space:pre-wrap;line-height:1.35}
+  .user{align-self:flex-end;background:#005c4b}
+  .bot{align-self:flex-start;background:#202c33}
+  .meta{align-self:center;font-size:12px;color:#8696a0}
+  form{max-width:640px;margin:0 auto;display:flex;gap:8px;padding:12px 16px;position:sticky;bottom:0;background:#0b141a}
+  input{flex:1;padding:11px;border-radius:8px;border:none;background:#2a3942;color:#e9edef;font-size:15px}
+  button{padding:11px 16px;border:none;border-radius:8px;background:#00a884;color:#fff;font-weight:600;cursor:pointer}
+</style></head><body>
+<header>🚗 Allycar — Consultor (teste)&nbsp; <button onclick="reset()" style="float:right;background:#3b4a54">Reiniciar</button></header>
+<div id="chat"></div>
+<form onsubmit="return send(event)">
+  <input id="inp" placeholder="Escreva como um cliente…" autocomplete="off" autofocus>
+  <button>Enviar</button>
+</form>
+<script>
+const chat=document.getElementById('chat'), inp=document.getElementById('inp');
+const session='teste-web-'+Math.floor(Date.now()/86400000);
+function add(t,cls){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d;}
+async function send(e){e.preventDefault();const m=inp.value.trim();if(!m)return false;add(m,'user');inp.value='';
+  const w=add('…','meta');
+  try{const r=await fetch('/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session,message:m})});
+    const j=await r.json();w.remove();add(j.reply||('erro: '+(j.error||'')),'bot');
+    if(j.reservou)add('✅ lead marcou RESERVOU (consultor acionado)','meta');
+    else if(j.escalar)add('🧑‍💼 escalado para humano','meta');
+  }catch(err){w.remove();add('erro de rede','meta');}
+  return false;}
+async function reset(){await fetch('/agent/chat/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session})});chat.innerHTML='';}
+</script></body></html>"""
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
     print("🤖 webhook_agent (consultor) iniciado.")

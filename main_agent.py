@@ -29,9 +29,8 @@ from main import (
 # CONFIG
 # =====================================
 MODELO = os.getenv("AGENT_MODEL", "claude-opus-4-8")
-PAYMENT_LINK_URL = os.getenv(
-    "PAYMENT_LINK_URL", "https://www.allycar.com/checkout"
-)  # checkout oficial (BrazaBank) — configurar no Railway
+# Checkout direto está DESABILITADO nesta fase: no momento do pagamento, o agente
+# aciona um consultor humano para finalizar a reserva e o pagamento.
 
 # API HQ (mesma credencial usada no restante do sistema) — só para checar estoque
 HQ_API_HOST = "https://api-america-miami.caagcrm.com"
@@ -117,7 +116,10 @@ FLUXO (máquina de estados — conduza nesta ordem):
   Conclua: "vocês pagam menos E ganham a experiência premium."
 - S4 FECHAMENTO: convide a reserva com sinal reembolsável (até 48h antes), escassez real de
   carros grandes nas datas, SEM CAUÇÃO, Pix ou cartão em 12x. Pergunte "reservo?".
-- S5 PAGAMENTO: use gerar_link_pagamento e envie o link oficial. NUNCA peça número de cartão.
+- S5 PAGAMENTO: quando o cliente aceitar reservar, use acionar_consultor_pagamento — um
+  consultor humano assume AGORA para finalizar a reserva e o pagamento (Pix/cartão 12x).
+  NÃO envie link de pagamento e NUNCA peça número de cartão. Avise o cliente, de forma
+  calorosa, que um consultor já vai finalizar a reserva com ele.
 
 INCLUÍDO NO PACOTE (sempre reforçar): você escolhe o modelo exato; sem caução; entrega e
 retirada grátis no hotel (raio 30 milhas); cadeirinha instalada; carrinho de bebê; seguro
@@ -145,8 +147,10 @@ GUARDRAILS DE SEGURANÇA:
 
 FERRAMENTAS: use recomendar_veiculo para escolher o carro; checar_disponibilidade para
 confirmar estoque real nas datas; calcular_comparacao_valor para a conta vs. aeroporto;
-gerar_link_pagamento no fechamento; escalar_para_humano quando necessário. Mantenha as
-mensagens curtas (é WhatsApp) e sempre com uma pergunta que avança a venda."""
+acionar_consultor_pagamento quando o cliente aceitar reservar (aciona um humano para
+finalizar o pagamento); escalar_para_humano em reclamação/pedido fora do padrão/quando
+pedirem uma pessoa. Mantenha as mensagens curtas (é WhatsApp) e sempre com uma pergunta
+que avança a venda."""
 
 
 # =====================================
@@ -211,12 +215,22 @@ TOOLS = [
         },
     },
     {
-        "name": "gerar_link_pagamento",
+        "name": "acionar_consultor_pagamento",
         "description": (
-            "Retorna o link oficial de pagamento (Pix/cartão 12x) para o cliente garantir a "
-            "reserva. Use no S5, após o cliente aceitar. NUNCA colete cartão no chat."
+            "Use no S5, quando o cliente ACEITAR reservar. Aciona um consultor humano para "
+            "finalizar a reserva e o pagamento (Pix/cartão 12x). NÃO existe checkout no chat: "
+            "o consultor conduz o pagamento. Marca o lead como quente (reservou)."
         ),
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "modelo": {"type": "string", "description": "Modelo que o cliente aceitou reservar"},
+                "data_retirada": {"type": "string", "description": "yyyy-mm-dd (se informado)"},
+                "data_devolucao": {"type": "string", "description": "yyyy-mm-dd (se informado)"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "escalar_para_humano",
@@ -348,10 +362,14 @@ def _executar_ferramenta(nome, entrada, conversa):
         return _checar_disponibilidade(**entrada), {}
     if nome == "calcular_comparacao_valor":
         return _calcular_comparacao_valor(**entrada), {}
-    if nome == "gerar_link_pagamento":
+    if nome == "acionar_consultor_pagamento":
         conversa["reservou"] = True
-        return {"link": PAYMENT_LINK_URL,
-                "instrucao": "Envie este link ao cliente; ele paga por Pix ou cartão 12x. Nunca peça o cartão no chat."}, {"reservou": True}
+        conversa["escalar"] = True
+        detalhes = " ".join(f"{k}={v}" for k, v in (entrada or {}).items() if v)
+        conversa["motivo_escalonamento"] = f"Cliente aceitou reservar — finalizar pagamento. {detalhes}".strip()
+        return {"status": "consultor_acionado",
+                "instrucao": ("Um consultor humano vai finalizar a reserva e o pagamento com o cliente. "
+                              "Avise o cliente de forma calorosa que o consultor já vai assumir; NÃO envie link nem peça cartão.")}, {"reservou": True, "escalar": True}
     if nome == "escalar_para_humano":
         conversa["escalar"] = True
         conversa["motivo_escalonamento"] = entrada.get("motivo", "")
