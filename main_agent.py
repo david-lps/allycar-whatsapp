@@ -437,6 +437,9 @@ def responder_agente(conversa, mensagem_usuario, max_iteracoes=6):
         "O período mínimo de aluguel é de 2 dias. Se houver qualquer ambiguidade na data, "
         "confirme com o cliente antes de cotar."
     )
+    nome = (conversa.get("name") or "").strip()
+    if nome and nome != "Cliente" and not nome.startswith("teste-web"):
+        contexto_dia += f" O cliente se chama {nome} — trate-o pelo primeiro nome quando fizer sentido."
 
     for _ in range(max_iteracoes):
         resposta = client.messages.create(

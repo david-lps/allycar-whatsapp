@@ -12,6 +12,7 @@ Fluxo assíncrono (o agente com Opus pode passar do timeout de ~15s do Twilio):
 """
 
 import os
+import json
 import threading
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from dotenv import load_dotenv
 import requests
 from twilio.rest import Client
 
-from main import conectar_google_sheets
+from main import conectar_google_sheets, formatar_telefone
 import main_agent
 
 load_dotenv()
@@ -30,6 +31,8 @@ app = Flask(__name__)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")  # "whatsapp:+1..."
+# Template de entrada EXCLUSIVO do agente (novo SID, separado da produção)
+AGENT_TEMPLATE_SID = os.getenv("AGENT_TEMPLATE_SID")
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
@@ -163,9 +166,48 @@ def webhook_agent():
     return ("", 204)
 
 
+@app.route("/agent/enviar-inicial", methods=["POST"])
+def enviar_inicial():
+    """
+    Envia o template de entrada do agente (AGENT_TEMPLATE_SID) para um número e
+    registra a conversa (com o nome), para que as respostas caiam no agente.
+    Body JSON: {phone, name, language?}. Use para testar o disparo do agente.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    name = (data.get("name") or "Cliente").strip()
+    language = (data.get("language") or "pt").strip()
+    if not phone:
+        return {"error": "phone obrigatório"}, 400
+    if not AGENT_TEMPLATE_SID:
+        return {"error": "AGENT_TEMPLATE_SID não configurado no serviço do agente"}, 400
+
+    to = formatar_telefone(phone)  # whatsapp:+...
+    try:
+        msg = twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            to=to,
+            content_sid=AGENT_TEMPLATE_SID,
+            content_variables=json.dumps({"1": name}),
+        )
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+    conversations_agent[to] = {
+        "name": name, "phone": phone.replace("whatsapp:", ""),
+        "language": language, "history": [],
+    }
+    return {"status": "enviado", "sid": msg.sid, "to": to}, 200
+
+
 @app.route("/agent/health", methods=["GET"])
 def health():
-    return {"status": "ok", "conversas": len(conversations_agent), "modelo": main_agent.MODELO}, 200
+    return {
+        "status": "ok",
+        "conversas": len(conversations_agent),
+        "modelo": main_agent.MODELO,
+        "template_configurado": bool(AGENT_TEMPLATE_SID),
+    }, 200
 
 
 # ------- teste conversacional pelo navegador (sem Twilio/WhatsApp) -------
