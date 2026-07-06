@@ -155,6 +155,8 @@ FLUXO (conduza nesta ordem):
   como "Pacote Família Tranquila", com tudo incluso.
 - S3 COMPARAÇÃO: com o preço real em mãos, use calcular_comparacao_valor e mostre a conta lado
   a lado (Allycar tudo incluso vs. aeroporto com extras somados + caução + fila + inglês).
+  IMPORTANTE: o valor do aeroporto é uma ESTIMATIVA média — apresente sempre como aproximado
+  ("em média", "costuma custar cerca de ~US$X"), NUNCA como cotação exata de outra locadora.
   Conclua: "vocês pagam menos E ganham a experiência premium."
 - S4 FECHAMENTO: convide a reserva com sinal reembolsável (até 48h antes), escassez real de
   carros grandes nas datas, SEM CAUÇÃO, pagamento em PIX/cartão/débito em até 24×. Pergunte "reservo?".
@@ -377,7 +379,8 @@ def _calcular_comparacao_valor(allycar_total_usd, num_dias, num_criancas):
     base = (COMP["base_suv_dia"] + COMP["seguro_dia"]
             + COMP["condutor_add_dia"] + COMP["pedagio_dia"]) * dias
     cadeirinha = min(COMP["cadeirinha_dia"] * dias, COMP["cadeirinha_cap"]) * criancas
-    aeroporto_total = round((base + cadeirinha) * (1 + COMP["taxa_percentual"]))
+    bruto = (base + cadeirinha) * (1 + COMP["taxa_percentual"])
+    aeroporto_total = int(round(bruto / 50.0)) * 50  # arredonda p/ parecer estimativa, não cotação exata
 
     return {
         "num_dias": dias,
@@ -386,6 +389,8 @@ def _calcular_comparacao_valor(allycar_total_usd, num_dias, num_criancas):
         "aeroporto_total_estimado_usd": aeroporto_total,
         "aeroporto_extras": f"+ caução ({COMP['caucao_hold']}) + fila + atendimento em inglês + seguro/condutor/pedágio cobrados no balcão",
         "economia_usd": max(aeroporto_total - allycar_total, 0),
+        "aviso": ("O valor do aeroporto é uma ESTIMATIVA média (não é cotação real de concorrente). "
+                  "Apresente como aproximado: 'em média cerca de ~US$X', nunca como um valor exato de outra locadora."),
     }
 
 
