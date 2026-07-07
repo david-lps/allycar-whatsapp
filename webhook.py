@@ -1570,6 +1570,9 @@ def _hq_register_payment(order_ref, amount, label):
     return {'status': resp.status_code}
 
 
+_braza_notified = set()   # cod_quotes já avisados — evita e-mail duplicado
+
+
 def _notify_team_payment(order_ref, status, amount_brl, method):
     """Avisa a equipe por e-mail (Resend) sobre a mudança de pagamento."""
     try:
@@ -1578,12 +1581,56 @@ def _notify_team_payment(order_ref, status, amount_brl, method):
             headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
                      'Content-Type': 'application/json'},
             json={'from': 'Allycar <booking@allycar.com>',
-                  'to': ['higor@allycar.com', 'david@allycar.com'],
+                  'to': ['higor@allycar.com', 'bruno@allycar.com', 'david@allycar.com'],
                   'subject': f'Pagamento {status} ({method}) - reserva {order_ref}',
-                  'text': f'Reserva: {order_ref}\nStatus: {status}\nMetodo: {method}\nValor BRL: {amount_brl}'},
+                  'text': ('Pagamento via BrazaBank.\n\n'
+                           f'Reserva HQ: {order_ref}\nStatus: {status}\nMetodo: {method}\nValor BRL: {amount_brl}\n\n'
+                           'Acao: dar baixa desta reserva na HQ (enquanto o webhook automatico nao fica ativo).')},
             timeout=10)
     except Exception as e:
-        print(f'[braza/webhook] e-mail ignorado: {e}')
+        print(f'[braza] e-mail ignorado: {e}')
+
+
+@app.route('/api/braza/confirm', methods=['POST', 'OPTIONS'])
+def braza_confirm():
+    """
+    Interino (enquanto o webhook da Braza não está ativo): o front chama isto
+    quando detecta o PIX pago. RE-VERIFICA o pagamento no servidor (não confia
+    no cliente) e, se realmente pago, avisa a equipe por e-mail. A baixa na HQ
+    segue MANUAL por enquanto.
+    """
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        data = request.get_json() or {}
+        cod_quote = data.get('cod_quote') or data.get('codQuote')
+        pix_id    = data.get('pix_id')
+        if not cod_quote and not pix_id:
+            return _braza_json({'ok': False, 'error': 'cod_quote ou pix_id obrigatório'}, 400)
+
+        paid = False
+        if pix_id:
+            st = braza.pix_status(pix_id)
+            paid = str(st.get('status', '')).upper() == 'PAID'
+            cod_quote = cod_quote or st.get('codQuote')
+        if cod_quote:
+            sale = braza.get_sale(cod_quote)
+            if sale.get('statusLabel') == 'success' or str(sale.get('statusName', '')).lower() in ('recebido', 'processado'):
+                paid = True
+
+        if not paid:
+            return _braza_json({'ok': True, 'paid': False})
+
+        key = cod_quote or pix_id
+        if key in _braza_notified:
+            return _braza_json({'ok': True, 'paid': True, 'already': True})
+        _braza_notified.add(key)
+
+        info = braza.get_sale(cod_quote) if cod_quote else {}
+        _notify_team_payment(info.get('identifier'), 'PAID', info.get('amount'), info.get('paymentMethod', 'pix'))
+        return _braza_json({'ok': True, 'paid': True, 'notified': True})
+    except Exception as e:
+        return _braza_fail(e)
 
 
 @app.route('/api/braza/webhook', methods=['POST'])
@@ -1607,7 +1654,9 @@ def braza_webhook():
             order_ref  = sale.get('identifier')
             amount_brl = sale.get('amount')
             method     = sale.get('paymentMethod', 'braza')
-            _notify_team_payment(order_ref, status, amount_brl, method)   # humano avisado primeiro
+            if cod_quote not in _braza_notified:                          # dedup c/ o /confirm
+                _braza_notified.add(cod_quote)
+                _notify_team_payment(order_ref, status, amount_brl, method)
             if status == 'PAID':
                 _hq_register_payment(order_ref, amount_brl, method)
     except Exception as e:
