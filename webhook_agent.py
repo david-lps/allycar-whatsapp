@@ -529,7 +529,7 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   table{width:100%;border-collapse:collapse}
   th,td{text-align:left;padding:10px;border-bottom:1px solid #22303a;font-size:14px;vertical-align:top}
   th{color:#8696a0;font-weight:600}
-  .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+  .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:inline-block}
   .Reservou{background:#0b6b3a;color:#d7ffe8}
   .QuerAlugar{background:#123a5a;color:#cfe8ff}
   .Consultor{background:#7a4a12;color:#ffe8c7}
@@ -553,8 +553,8 @@ async function load(){
   j.leads.forEach((l,i)=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
-      <td>${tag(l.situacao)}</td><td style="font-size:13px;min-width:340px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
-      <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
+      <td style="white-space:nowrap">${tag(l.situacao)}</td><td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
+      <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
     const tr2=document.createElement('tr');
