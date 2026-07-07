@@ -1477,11 +1477,12 @@ def braza_client_complete():
         addr = braza.lookup_cep(cep)
         info = {
             'cep':          addr.get('cep', cep),
-            'state':        addr.get('uf', data.get('state', '')),
-            'city':         addr.get('localidade', data.get('city', '')),
-            'code':         addr.get('ibge', data.get('code', '')),
-            'neighborhood': addr.get('bairro', data.get('neighborhood', '')),
-            'address':      addr.get('logradouro', data.get('address', '')),
+            'state':        addr.get('uf') or data.get('state', ''),
+            'city':         addr.get('localidade') or data.get('city', ''),
+            'code':         addr.get('ibge') or data.get('code', ''),
+            'neighborhood': addr.get('bairro') or data.get('neighborhood', ''),
+            # prefere o que o cliente informou (veio da HQ); CEP é o fallback
+            'address':      data.get('address') or addr.get('logradouro', ''),
             'number':       data.get('number', ''),
             'complement':   data.get('complement', ''),
             'phone':        data.get('phone', ''),
