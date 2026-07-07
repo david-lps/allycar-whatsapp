@@ -439,6 +439,7 @@ def agent_leads_data():
     for row in agent_store.listar():
         st = row.get("state") or {}
         itens.append({
+            "key": row.get("key"),
             "nome": st.get("name", "Cliente"),
             "telefone": st.get("phone", ""),
             "idioma": st.get("language", ""),
@@ -449,6 +450,18 @@ def agent_leads_data():
             "transcricao": _transcricao(st),
         })
     return {"total": len(itens), "leads": itens}, 200
+
+
+@app.route("/agent/leads/delete", methods=["POST"])
+def agent_leads_delete():
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    data = request.get_json(force=True, silent=True) or {}
+    key = (data.get("key") or "").strip()
+    if not key:
+        return {"error": "key obrigatório"}, 400
+    agent_store.deletar(key)
+    return {"status": "deletado", "key": key}, 200
 
 
 @app.route("/agent/leads", methods=["GET"])
@@ -492,12 +505,19 @@ async function load(){
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
       <td>${tag(l.situacao)}</td><td>${l.atualizado||''}</td>
-      <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button></td>`;
+      <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
+      <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
     const tr2=document.createElement('tr');
     tr2.innerHTML=`<td colspan="6"><pre id="t${i}" style="display:none">${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></td>`;
     tb.appendChild(tr2);
   });
+}
+async function del(key){
+  if(!key||!confirm('Excluir a conversa de '+key+' ?'))return;
+  await fetch('/agent/leads/delete'+(token?('?token='+encodeURIComponent(token)):''),
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+  load();
 }
 load();
 </script></body></html>"""
