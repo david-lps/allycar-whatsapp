@@ -16,6 +16,7 @@ débito; para clientes no Brasil, também PIX e até 12x. Modelo: claude-opus-4-
 import os
 import json
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 import pytz
 import anthropic
@@ -41,7 +42,16 @@ HQ_API_AUTH = os.getenv(
 HQ_BRAND_ID = os.getenv("HQ_BRAND_ID", "1")
 HQ_PICKUP_LOCATION = os.getenv("HQ_PICKUP_LOCATION", "3")  # Orlando MCO
 
+# Impostos/taxas — usados SÓ quando o cliente pede o total com impostos
+CAR_RENTAL_SURCHARGE_DIA = 2.0   # USD por diária (Car rental surcharge)
+SALES_TAX = 0.065                # 6,5% sobre (base + surcharge)
+
 client = anthropic.Anthropic()  # lê ANTHROPIC_API_KEY do ambiente
+
+
+def _round2(x):
+    """Arredonda para 2 casas (meio-para-cima), como cálculo financeiro."""
+    return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 # =====================================
 # FROTA (referência p/ recomendação — SEM preço; o preço vem da HQ em tempo real)
@@ -140,6 +150,9 @@ PREÇO — REGRA ABSOLUTA:
 - Só cote um modelo que apareça como disponível nessa consulta. Se o modelo ideal não estiver
   disponível, recomende a melhor alternativa DISPONÍVEL.
 - Ao informar valores, deixe SEMPRE claro que são valores SEM impostos (impostos/taxas à parte).
+- NÃO exponha o total com impostos de cara. MAS, se o cliente PEDIR o valor total com impostos,
+  use a ferramenta calcular_total_com_impostos (passando o total sem impostos e o nº de diárias)
+  e informe o valor EXATO retornado. Nunca estime impostos de cabeça.
 
 FLUXO (conduza nesta ordem):
 - S1 DESCOBERTA: pergunte de forma leve — quantos adultos e crianças (idades), quantas malas,
@@ -251,6 +264,23 @@ TOOLS = [
                 "data_devolucao": {"type": "string"},
             },
             "required": [],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "calcular_total_com_impostos",
+        "description": (
+            "Calcula o VALOR TOTAL COM IMPOSTOS. Use SOMENTE se o cliente PEDIR o total com "
+            "impostos (não ofereça de cara). Passe o total SEM impostos (o total_usd retornado "
+            "na consulta de preços) e o nº de diárias. Retorna o total exato — informe esse valor."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "total_base_usd": {"type": "number", "description": "Total sem impostos (total_usd da consulta de preços)"},
+                "num_dias": {"type": "integer", "description": "Número de diárias"},
+            },
+            "required": ["total_base_usd", "num_dias"],
             "additionalProperties": False,
         },
     },
@@ -377,11 +407,33 @@ def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=Non
     return {"status": "ok", "obs": "Valores SEM impostos (impostos/taxas à parte).", "veiculos": resultados[:top_n]}
 
 
+def _calcular_total_com_impostos(total_base_usd, num_dias):
+    """
+    Total com impostos = (base sem impostos + $2 x diárias) + 6,5% de Sales Tax.
+    Ex: base 455, 7 dias → (455 + 14) + 30,49 = 499,49.
+    """
+    base = _round2(total_base_usd or 0)
+    dias = max(int(num_dias or 1), 1)
+    surcharge = _round2(CAR_RENTAL_SURCHARGE_DIA * dias)
+    subtotal = _round2(base + surcharge)
+    sales_tax = _round2(subtotal * SALES_TAX)
+    total = _round2(subtotal + sales_tax)
+    return {
+        "base_sem_impostos_usd": base,
+        "car_rental_surcharge_usd": surcharge,
+        "sales_tax_usd": sales_tax,
+        "total_com_impostos_usd": total,
+        "detalhe": f"${base} + ${surcharge} (surcharge) + ${sales_tax} (6,5% sales tax) = ${total}",
+    }
+
+
 def _executar_ferramenta(nome, entrada, conversa):
     if nome == "recomendar_veiculo":
         return _recomendar_veiculo(**entrada), {}
     if nome == "consultar_disponibilidade_precos":
         return _consultar_disponibilidade_precos(**entrada), {}
+    if nome == "calcular_total_com_impostos":
+        return _calcular_total_com_impostos(**entrada), {}
     if nome == "acionar_consultor_pagamento":
         conversa["reservou"] = True
         conversa["escalar"] = True
