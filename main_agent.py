@@ -9,8 +9,8 @@ PREÇO REAL da HQ → comparação de valor → fechamento → aciona consultor 
 pagamento. Nunca lista o catálogo com preços, nunca coleta cartão no chat.
 
 Preço: SEMPRE os valores reais da API da HQ (não há tabela fixa de preço).
-Local: sempre Orlando + raio de 30 milhas. Pagamento: cartão de crédito em
-até 12x, cartão de débito e PIX (apenas Brasil). Modelo: claude-opus-4-8.
+Local: sempre Orlando + raio de 30 milhas. Pagamento: cartão de crédito ou
+débito; para clientes no Brasil, também PIX e até 12x. Modelo: claude-opus-4-8.
 """
 
 import os
@@ -102,7 +102,9 @@ TUDO JÁ INCLUSO NO PACOTE (deixe MUITO claro — é o nosso maior diferencial v
 - Entrega e retirada GRÁTIS em Orlando e num raio de até 30 MILHAS — levamos onde você estiver.
 - SEM caução / SEM depósito: seu dinheiro livre, sem bloqueio no cartão.
 - Atendimento 24×7 em PT / EN / ES — suporte humano quando precisar.
-- Pagamento em cartão de crédito em até 12×, cartão de débito, e PIX (somente para clientes no Brasil).
+- Pagamento em cartão de crédito ou débito (todos os clientes). APENAS para clientes no BRASIL:
+  também aceitamos PIX e parcelamento em até 12× no cartão de crédito. Para clientes de outros
+  países, NÃO ofereça PIX nem 12× — só cartão de crédito/débito.
 
 Os 3 diferenciais matadores para destacar cedo: você escolhe o MODELO EXATO ·
 SEM CAUÇÃO · ENTREGA no hotel SEM FILA (Orlando + 30 milhas).
@@ -157,8 +159,8 @@ FLUXO (conduza nesta ordem):
   a melhor experiência, sem surpresas." Não invente valores de terceiros nem dê números de outras
   locadoras — o foco é a transparência e o pacote completo.
 - S4 FECHAMENTO: convide a reserva com sinal reembolsável (até 48h antes), escassez real de
-  carros grandes nas datas, SEM CAUÇÃO, pagamento em cartão de crédito em até 12×, débito ou PIX
-  (PIX apenas para Brasil). Pergunte "reservo?".
+  carros grandes nas datas, SEM CAUÇÃO, pagamento em cartão de crédito ou débito (e, para
+  clientes no Brasil, também PIX e até 12× no cartão). Pergunte "reservo?".
 - S5 RESERVA: quando o cliente ACEITAR, o caminho ideal é fechar PELO SITE allycar.com, onde
   ele conclui a reserva na hora. Reforce que, cadastrando o email no site, ele recebe um cupom
   de 5% por email para usar na PRIMEIRA reserva online. Envie o link e incentive esse caminho.
@@ -238,7 +240,7 @@ TOOLS = [
         "name": "acionar_consultor_pagamento",
         "description": (
             "Use no S5, quando o cliente ACEITAR reservar. Aciona um consultor humano para "
-            "finalizar a reserva e o pagamento (crédito até 12×, débito ou PIX só Brasil). Não há checkout no "
+            "finalizar a reserva e o pagamento (cartão de crédito/débito; Brasil também PIX e até 12×). Não há checkout no "
             "chat: o consultor conduz. Marca o lead como quente (reservou)."
         ),
         "input_schema": {
