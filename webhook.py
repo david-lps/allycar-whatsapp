@@ -739,11 +739,7 @@ def health():
 def capturar_lead_home():
 
     if request.method == 'OPTIONS':
-        response = app.make_default_options_response()
-        response.headers['Access-Control-Allow-Origin'] = 'https://www.allycar.com'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response
+        return _cors(app.make_default_options_response())
 
     try:
         data  = request.get_json()
@@ -816,8 +812,7 @@ def capturar_lead_home():
             mimetype='application/json'
         )
 
-    response.headers['Access-Control-Allow-Origin'] = 'https://www.allycar.com'
-    return response
+    return _cors(response)
 
 def _lead_coupon_email(name: str, lang: str):
     """Retorna (subject, html) do e-mail do cupom no idioma correto."""
@@ -933,9 +928,21 @@ HQ_API_BASE  = 'https://api-america-miami.caagcrm.com/api-america-miami'
 HQ_API_TOKEN = 'Basic YzQzMlR2elRSbFdxMGlJNldUeEFGM1lvUjBqcjVkV2dxRWJ0NGs2TlFTZzhZbmd0RWg6NXVhQjZTWEdGNU1zTk40RExrd29wVTBuZ2RURVpGeHBNb0l4RnZZRHBveGRjaUgxZnA='
 ALLOWED_ORIGIN = 'https://www.allycar.com'
 
+# Origens permitidas para os proxies HQ (www + apex + dev).
+# Antes o CORS era fixo em www.allycar.com; quem abria o site SEM "www"
+# (ex.: https://allycar.com) tomava "Failed to fetch" no browser.
+HQ_ALLOWED_ORIGINS = {
+    'https://www.allycar.com',
+    'https://allycar.com',
+    'http://localhost:4321',
+    'http://localhost:4323',
+}
+
 # ── Cabeçalhos CORS reutilizáveis ──────────────────────────────────────────
 def _cors(response):
-    response.headers['Access-Control-Allow-Origin']  = ALLOWED_ORIGIN
+    origin = request.headers.get('Origin', '')
+    response.headers['Access-Control-Allow-Origin']  = origin if origin in HQ_ALLOWED_ORIGINS else ALLOWED_ORIGIN
+    response.headers['Vary'] = 'Origin'
     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
