@@ -9,6 +9,7 @@ from main import conectar_google_sheets
 from datetime import datetime
 import os
 import requests
+import braza   # integração BrazaBank Checkout v2 (PIX + cartão)
 
 load_dotenv()
 
@@ -1415,6 +1416,203 @@ def transfer_confirm():
     except Exception as e:
         print(f'[transfer/confirm] erro: {e}')
         return _json_resp({'success': False, 'message': str(e)}, 500)
+
+
+# =====================================
+# BRAZABANK — PIX + CARTÃO (Checkout v2, fluxo COM documento)
+# Chamado pelo booking-confirmation.html. A lógica de API está em braza.py;
+# aqui só orquestramos + CORS. Nada roda até as env vars BRAZA_* existirem.
+# =====================================
+import json as _bjson
+
+
+def _braza_json(payload, status=200):
+    return _cors(app.response_class(
+        response=_bjson.dumps(payload), status=status, mimetype='application/json'))
+
+
+def _braza_fail(e, status=502):
+    """Erro de chamada à Braza -> JSON limpo p/ o front (sem stack)."""
+    resp = getattr(e, 'response', None)
+    if resp is not None:
+        try:
+            body = resp.json()
+        except Exception:
+            body = {'error': (resp.text or '')[:300]}
+        return _braza_json({'ok': False, 'braza': body}, resp.status_code)
+    print(f'[braza] erro: {e}')
+    return _braza_json({'ok': False, 'error': str(e)}, status)
+
+
+@app.route('/api/braza/quote', methods=['POST', 'OPTIONS'])
+def braza_quote():
+    """Cota US$->BRL e valida o CPF. Front usa p/ montar PIX e parcelas."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        data = request.get_json() or {}
+        amount_usd = data.get('amount_usd') or data.get('amount')
+        order_ref  = data.get('order_ref') or data.get('orderRef') or data.get('external_id')
+        cpf        = (data.get('cpf') or '').strip()
+        if not amount_usd or not order_ref:
+            return _braza_json({'ok': False, 'error': 'amount_usd e order_ref são obrigatórios'}, 400)
+        quote = braza.create_quote(amount_usd, order_ref)
+        client_status = braza.validate_client(cpf) if cpf else None
+        return _braza_json({'ok': True, 'quote': quote, 'client': client_status})
+    except Exception as e:
+        return _braza_fail(e)
+
+
+@app.route('/api/braza/client/complete', methods=['POST', 'OPTIONS'])
+def braza_client_complete():
+    """Completa cadastro pendente do cliente (endereço via CEP + contato)."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        data = request.get_json() or {}
+        cpf = (data.get('cpf') or '').strip()
+        cep = (data.get('cep') or '').strip()
+        if not cpf or not cep:
+            return _braza_json({'ok': False, 'error': 'cpf e cep são obrigatórios'}, 400)
+        addr = braza.lookup_cep(cep)
+        info = {
+            'cep':          addr.get('cep', cep),
+            'state':        addr.get('uf', data.get('state', '')),
+            'city':         addr.get('localidade', data.get('city', '')),
+            'code':         addr.get('ibge', data.get('code', '')),
+            'neighborhood': addr.get('bairro', data.get('neighborhood', '')),
+            'address':      addr.get('logradouro', data.get('address', '')),
+            'number':       data.get('number', ''),
+            'complement':   data.get('complement', ''),
+            'phone':        data.get('phone', ''),
+            'email':        data.get('email', ''),
+        }
+        return _braza_json({'ok': True, 'client': braza.update_client(cpf, info)})
+    except Exception as e:
+        return _braza_fail(e)
+
+
+@app.route('/api/braza/pix', methods=['POST', 'OPTIONS'])
+def braza_pix():
+    """Gera o PIX (QR + copia-e-cola) para uma cotação já criada."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        data = request.get_json() or {}
+        cod_quote    = data.get('cod_quote') or data.get('codQuote')
+        cod_customer = data.get('cod_customer') or data.get('codCustomer')
+        if not cod_quote or not cod_customer:
+            return _braza_json({'ok': False, 'error': 'cod_quote e cod_customer são obrigatórios'}, 400)
+        return _braza_json({'ok': True, 'pix': braza.create_pix(cod_quote, cod_customer)})
+    except Exception as e:
+        return _braza_fail(e)
+
+
+@app.route('/api/braza/cc-session', methods=['POST', 'OPTIONS'])
+def braza_cc_session():
+    """Cria a sessão de cartão e devolve a URL hospedada da Braza."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        data = request.get_json() or {}
+        cod_quote    = data.get('cod_quote') or data.get('codQuote')
+        cod_customer = data.get('cod_customer') or data.get('codCustomer')
+        installments = int(data.get('installments') or 1)
+        brl_quantity = data.get('brl_quantity') or data.get('brlQuantity')
+        if not cod_quote or not cod_customer or not brl_quantity:
+            return _braza_json({'ok': False, 'error': 'cod_quote, cod_customer e brl_quantity são obrigatórios'}, 400)
+        session = braza.create_cc_session(cod_quote, cod_customer, installments)
+        url = braza.cc_payment_url(session.get('uuid'), brl_quantity, installments)
+        return _braza_json({'ok': True, 'session': session, 'payment_url': url})
+    except Exception as e:
+        return _braza_fail(e)
+
+
+@app.route('/api/braza/status', methods=['GET', 'OPTIONS'])
+def braza_status():
+    """Status do pagamento: ?pix_id=... (PIX) ou ?cc_uuid=... (cartão)."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        pix_id  = request.args.get('pix_id')
+        cc_uuid = request.args.get('cc_uuid')
+        if pix_id:
+            return _braza_json({'ok': True, 'status': braza.pix_status(pix_id)})
+        if cc_uuid:
+            return _braza_json({'ok': True, 'status': braza.cc_status(cc_uuid)})
+        return _braza_json({'ok': False, 'error': 'informe pix_id ou cc_uuid'}, 400)
+    except Exception as e:
+        return _braza_fail(e)
+
+
+# Reconciliação na HQ. Precisa de 2 valores da conta HQ (ainda a confirmar):
+HQ_PAYMENT_ITEM_TYPE = os.getenv('HQ_PAYMENT_ITEM_TYPE')   # ex.: 'reservation'
+HQ_PAYMENT_METHOD_ID = os.getenv('HQ_PAYMENT_METHOD_ID')   # id do método PIX/Braza na HQ
+
+
+def _hq_register_payment(order_ref, amount, label):
+    """Dá baixa do pagamento na reserva do HQ. Sem os env vars, faz no-op seguro."""
+    if not (HQ_PAYMENT_ITEM_TYPE and HQ_PAYMENT_METHOD_ID and order_ref):
+        print(f'[braza/webhook] HQ_PAYMENT_* não configurado — baixa MANUAL necessária p/ {order_ref}')
+        return {'skipped': True}
+    params = {
+        'item_type':         HQ_PAYMENT_ITEM_TYPE,
+        'item_id':           order_ref,
+        'payment_method_id': HQ_PAYMENT_METHOD_ID,
+        'amount':            amount,
+        'label':             label,
+        'description':       f'BrazaBank {label} - reserva {order_ref}',
+    }
+    resp = requests.post(
+        f'{HQ_API_BASE}/payment-gateways/payment-transactions/',
+        headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=15)
+    print(f'[braza/webhook] HQ payment-transactions: {resp.status_code} | {resp.text[:300]}')
+    return {'status': resp.status_code}
+
+
+def _notify_team_payment(order_ref, status, amount_brl, method):
+    """Avisa a equipe por e-mail (Resend) sobre a mudança de pagamento."""
+    try:
+        requests.post(
+            'https://api.resend.com/emails',
+            headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
+                     'Content-Type': 'application/json'},
+            json={'from': 'Allycar <booking@allycar.com>',
+                  'to': ['higor@allycar.com', 'david@allycar.com'],
+                  'subject': f'Pagamento {status} ({method}) - reserva {order_ref}',
+                  'text': f'Reserva: {order_ref}\nStatus: {status}\nMetodo: {method}\nValor BRL: {amount_brl}'},
+            timeout=10)
+    except Exception as e:
+        print(f'[braza/webhook] e-mail ignorado: {e}')
+
+
+@app.route('/api/braza/webhook', methods=['POST'])
+def braza_webhook():
+    """
+    Notificação da Braza { codQuote, status }. Valida Basic token
+    (env BRAZA_WEBHOOK_TOKEN), descobre a reserva via get_sale.identifier,
+    avisa a equipe e registra o pagamento na HQ. Responder 2XX sempre p/
+    a Braza não reenviar em loop; erros ficam no log.
+    """
+    expected = os.getenv('BRAZA_WEBHOOK_TOKEN')
+    if expected and request.headers.get('Authorization', '') != f'Basic {expected}':
+        return app.response_class(response='{"ok":false}', status=401, mimetype='application/json')
+    try:
+        data = request.get_json(force=True) or {}
+        cod_quote = data.get('codQuote')
+        status    = (data.get('status') or '').upper()
+        print(f'[braza/webhook] codQuote={cod_quote} status={status}')
+        if cod_quote and status in ('PAID', 'REFUNDED', 'EXPIRED'):
+            sale = braza.get_sale(cod_quote)
+            order_ref  = sale.get('identifier')
+            amount_brl = sale.get('amount')
+            method     = sale.get('paymentMethod', 'braza')
+            _notify_team_payment(order_ref, status, amount_brl, method)   # humano avisado primeiro
+            if status == 'PAID':
+                _hq_register_payment(order_ref, amount_brl, method)
+    except Exception as e:
+        print(f'[braza/webhook] erro: {e}')
+    return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
 
 
 # =====================================
