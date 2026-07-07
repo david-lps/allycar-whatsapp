@@ -1546,8 +1546,8 @@ def braza_status():
 
 
 # Reconciliação na HQ. Precisa de 2 valores da conta HQ (ainda a confirmar):
-HQ_PAYMENT_ITEM_TYPE = os.getenv('HQ_PAYMENT_ITEM_TYPE')   # ex.: 'reservation'
-HQ_PAYMENT_METHOD_ID = os.getenv('HQ_PAYMENT_METHOD_ID')   # id do método PIX/Braza na HQ
+HQ_PAYMENT_ITEM_TYPE = os.getenv('HQ_PAYMENT_ITEM_TYPE', 'car_rental.reservations')  # confirmado no step 6
+HQ_PAYMENT_METHOD_ID = os.getenv('HQ_PAYMENT_METHOD_ID')   # id do método PIX/Braza na HQ (candidato: 12)
 
 
 def _hq_register_payment(order_ref, amount, label):
