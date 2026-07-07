@@ -18,6 +18,6 @@ jobs:
           echo "Calling Allycar trigger-send..."
           curl -sS -L \
             -H "User-Agent: GitHubActions-Cron" \
-            "https://allycar-whatsapp-production.up.railway.app/trigger-send"
+            "https://allycar-agent-production.up.railway.app/agent/trigger-send"
           echo ""
           echo "Done."
