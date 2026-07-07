@@ -525,7 +525,7 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <style>
   body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b141a;color:#e9edef;margin:0}
   header{background:#202c33;padding:14px 18px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
-  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  .wrap{max-width:1700px;width:96%;margin:0 auto;padding:16px}
   table{width:100%;border-collapse:collapse}
   th,td{text-align:left;padding:10px;border-bottom:1px solid #22303a;font-size:14px;vertical-align:top}
   th{color:#8696a0;font-weight:600}
@@ -553,7 +553,7 @@ async function load(){
   j.leads.forEach((l,i)=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
-      <td>${tag(l.situacao)}</td><td style="font-size:12px;max-width:280px">${(l.resumo||'—')}</td><td>${l.atualizado||''}</td>
+      <td>${tag(l.situacao)}</td><td style="font-size:13px;min-width:340px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
       <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
