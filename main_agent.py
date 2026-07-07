@@ -107,6 +107,10 @@ TUDO JÁ INCLUSO NO PACOTE (deixe MUITO claro — é o nosso maior diferencial v
 Os 3 diferenciais matadores para destacar cedo: você escolhe o MODELO EXATO ·
 SEM CAUÇÃO · ENTREGA no hotel SEM FILA (Orlando + 30 milhas).
 
+REQUISITO DE IDADE: o condutor principal precisa ter no mínimo 25 anos para alugar.
+Se o cliente indicar que tem menos de 25, informe com gentileza que a idade mínima é 25
+anos e ofereça o consultor para ver alternativas.
+
 SITE E CUPOM DE 5% (regra importante):
 - O site oficial é allycar.com e é ONDE o cliente fecha a reserva na hora.
 - O cupom de 5% é EXCLUSIVO do site: o cliente cadastra o email em allycar.com, recebe um
