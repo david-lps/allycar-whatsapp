@@ -248,17 +248,17 @@ def webhook_agent():
     return ("", 204)
 
 
-@app.route("/agent/enviar-inicial", methods=["POST"])
+@app.route("/agent/enviar-inicial", methods=["GET", "POST"])
 def enviar_inicial():
     """
-    Envia o template de entrada do agente (AGENT_TEMPLATE_SID) para um número e
-    registra a conversa (com o nome), para que as respostas caiam no agente.
-    Body JSON: {phone, name, language?}. Use para testar o disparo do agente.
+    Envia o template de entrada do agente para um número e registra a conversa.
+    Aceita POST JSON {phone, name, language?} OU GET por querystring
+    (?phone=+55...&name=David&language=pt) — para testar direto pelo navegador.
     """
     data = request.get_json(force=True, silent=True) or {}
-    phone = (data.get("phone") or "").strip()
-    name = (data.get("name") or "Cliente").strip()
-    language = (data.get("language") or "pt").strip()
+    phone = (data.get("phone") or request.args.get("phone") or "").strip()
+    name = (data.get("name") or request.args.get("name") or "Cliente").strip()
+    language = (data.get("language") or request.args.get("language") or "pt").strip()
     if not phone:
         return {"error": "phone obrigatório"}, 400
     sid = _template_sid(language)
