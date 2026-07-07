@@ -105,6 +105,46 @@ def _transcricao(conversa):
     return "\n".join(linhas)
 
 
+def _resumo_lead(st):
+    """Extrai do histórico as datas, o carro e os preços apresentados ao cliente."""
+    datas = {}
+    modelo_aceito = st.get("modelo_interesse")
+    veiculos = None
+    for m in st.get("history", []):
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                inp = b.get("input") or {}
+                if b.get("name") == "consultar_disponibilidade_precos":
+                    if inp.get("data_retirada"):
+                        datas = {"dr": inp.get("data_retirada"), "dv": inp.get("data_devolucao")}
+                elif b.get("name") == "acionar_consultor_pagamento":
+                    modelo_aceito = inp.get("modelo") or modelo_aceito
+                    if inp.get("data_retirada"):
+                        datas = {"dr": inp.get("data_retirada"), "dv": inp.get("data_devolucao")}
+            elif b.get("type") == "tool_result":
+                cont = b.get("content")
+                try:
+                    data = json.loads(cont) if isinstance(cont, str) else cont
+                    if isinstance(data, dict) and data.get("veiculos"):
+                        veiculos = data["veiculos"][:3]
+                except Exception:
+                    pass
+    partes = []
+    if datas.get("dr") and datas.get("dv"):
+        partes.append(f"📅 {datas['dr']} → {datas['dv']}")
+    if modelo_aceito:
+        partes.append(f"🚗 {modelo_aceito}")
+    if veiculos:
+        vs = "; ".join(f"{v.get('modelo')} {v.get('total', '')}".strip() for v in veiculos)
+        partes.append(f"💵 {vs} (s/ impostos)")
+    return " | ".join(partes) if partes else "—"
+
+
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
 def _variantes_telefone(from_number):
     num = (from_number or "").replace("whatsapp:", "")
@@ -438,13 +478,21 @@ def agent_leads_data():
     itens = []
     for row in agent_store.listar():
         st = row.get("state") or {}
+        if st.get("reservou"):
+            situacao = "Solicitou reserva"
+        elif st.get("intencao"):
+            situacao = "Quer alugar"
+        elif st.get("escalar"):
+            situacao = "Consultor"
+        else:
+            situacao = "Em conversa"
         itens.append({
             "key": row.get("key"),
             "nome": st.get("name", "Cliente"),
             "telefone": st.get("phone", ""),
             "idioma": st.get("language", ""),
-            "situacao": ("Solicitou reserva" if st.get("reservou")
-                         else ("Consultor" if st.get("escalar") else "Em conversa")),
+            "situacao": situacao,
+            "resumo": _resumo_lead(st),
             "motivo": st.get("motivo_escalonamento", ""),
             "atualizado": row.get("updated_at"),
             "transcricao": _transcricao(st),
@@ -483,6 +531,7 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   th{color:#8696a0;font-weight:600}
   .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
   .Reservou{background:#0b6b3a;color:#d7ffe8}
+  .QuerAlugar{background:#123a5a;color:#cfe8ff}
   .Consultor{background:#7a4a12;color:#ffe8c7}
   .Em{background:#334; color:#cdd}
   button{background:#2a3942;color:#e9edef;border:none;border-radius:6px;padding:5px 10px;cursor:pointer}
@@ -490,11 +539,11 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 </style></head><body>
 <header><span>📊 Allycar — Leads do Agente</span><button onclick="load()">Atualizar</button></header>
 <div class="wrap"><div id="info" style="color:#8696a0;margin-bottom:8px"></div>
-<table><thead><tr><th>Nome</th><th>Telefone</th><th>Idioma</th><th>Situação</th><th>Atualizado</th><th></th></tr></thead>
+<table><thead><tr><th>Nome</th><th>Telefone</th><th>Idioma</th><th>Situação</th><th>Resumo (datas · carro · preços)</th><th>Atualizado</th><th></th></tr></thead>
 <tbody id="rows"></tbody></table></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
-function tag(s){const map={'Solicitou reserva':'Reservou','Consultor':'Consultor','Em conversa':'Em'};return `<span class="tag ${map[s]||'Em'}">${s}</span>`;}
+function tag(s){const map={'Solicitou reserva':'Reservou','Quer alugar':'QuerAlugar','Consultor':'Consultor','Em conversa':'Em'};return `<span class="tag ${map[s]||'Em'}">${s}</span>`;}
 async function load(){
   const r=await fetch('/agent/leads/data'+(token?('?token='+encodeURIComponent(token)):''));
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
@@ -504,12 +553,12 @@ async function load(){
   j.leads.forEach((l,i)=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
-      <td>${tag(l.situacao)}</td><td>${l.atualizado||''}</td>
+      <td>${tag(l.situacao)}</td><td style="font-size:12px;max-width:280px">${(l.resumo||'—')}</td><td>${l.atualizado||''}</td>
       <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
     const tr2=document.createElement('tr');
-    tr2.innerHTML=`<td colspan="6"><pre id="t${i}" style="display:none">${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></td>`;
+    tr2.innerHTML=`<td colspan="7"><pre id="t${i}" style="display:none">${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></td>`;
     tb.appendChild(tr2);
   });
 }

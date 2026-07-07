@@ -165,6 +165,12 @@ FLUXO (conduza nesta ordem):
   Se o cliente preferir finalizar por aqui (WhatsApp) ou quiser ajuda humana, use
   acionar_consultor_pagamento (um consultor assume). NUNCA peça número de cartão no chat.
 
+SINAL DE INTENÇÃO (importante para o time): assim que o cliente, DEPOIS de ver o preço/opções,
+demonstrar que quer alugar (ex: "gostei", "quero", "ok", "perfeito", "como faço pra pagar",
+"pode reservar"), chame marcar_intencao_compra (com o modelo, se já definido) — é um marcador
+interno, você segue a conversa normalmente. Se ele efetivamente ACEITAR reservar, aí use
+acionar_consultor_pagamento. Quem só pediu cotação e não sinalizou interesse NÃO deve ser marcado.
+
 LÓGICA DE RECOMENDAÇÃO (sweet spot; ofereça 1 alternativa só se pedirem):
 - Até 4 pessoas, econômico: Toyota Corolla / Camry Hybrid / Nissan Kicks
 - Até 5 pessoas, conforto: RAV4 / Ford Edge / Jeep Compass; premium → Tesla Model Y
@@ -242,6 +248,21 @@ TOOLS = [
                 "data_retirada": {"type": "string"},
                 "data_devolucao": {"type": "string"},
             },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "marcar_intencao_compra",
+        "description": (
+            "Marque quando o cliente, DEPOIS de ver as opções/preço, demonstrar intenção de "
+            "alugar (ex: 'gostei', 'quero', 'ok', 'perfeito', 'como faço pra pagar', 'pode "
+            "reservar', 'vou querer'). É um marcador INTERNO (não envia nada ao cliente): "
+            "continue a conversa normalmente rumo ao fechamento. Passe o modelo se já definido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"modelo": {"type": "string"}},
             "required": [],
             "additionalProperties": False,
         },
@@ -367,6 +388,11 @@ def _executar_ferramenta(nome, entrada, conversa):
         return {"status": "consultor_acionado",
                 "instrucao": ("Um consultor humano vai finalizar a reserva e o pagamento com o cliente. "
                               "Avise o cliente de forma calorosa que o consultor já vai assumir; NÃO envie link nem peça cartão.")}, {"reservou": True, "escalar": True}
+    if nome == "marcar_intencao_compra":
+        conversa["intencao"] = True
+        if entrada.get("modelo"):
+            conversa["modelo_interesse"] = entrada["modelo"]
+        return {"status": "ok", "mensagem": "Interesse registrado internamente. Continue rumo ao fechamento."}, {"intencao": True}
     if nome == "escalar_para_humano":
         conversa["escalar"] = True
         conversa["motivo_escalonamento"] = entrada.get("motivo", "")
