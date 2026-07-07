@@ -302,7 +302,7 @@ def _disparar_leads_agente():
         telefone = str(lead.get("TELEFONE", "")).strip()
         status = str(lead.get("STATUS", "")).strip()
 
-        if status:  # já processado (evita reenvio; produção usa 'Sent')
+        if status == "Sent":  # só pula quem já foi enviado (mesma regra da produção)
             pulados += 1
             continue
         if not nome or not telefone:
