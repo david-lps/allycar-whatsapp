@@ -65,9 +65,25 @@ PAISES_ES = {
 # EUA: mesmo tratamento da produção (email + SMS em inglês, não WhatsApp)
 PAISES_USA = {"usa", "united states", "estados unidos", "eua"}
 
+# Token opcional de proteção do dashboard (recomendado configurar no Railway)
+DASHBOARD_TOKEN = os.getenv("AGENT_DASHBOARD_TOKEN")
+
+
+def _dash_ok():
+    if not DASHBOARD_TOKEN:
+        return True  # sem token configurado → liberado (configure para proteger)
+    return request.args.get("token") == DASHBOARD_TOKEN
+
 
 def _idioma_por_pais(pais):
     return "es" if (pais or "").strip().lower() in PAISES_ES else "pt"
+
+
+def _bloco_tipo_texto(b):
+    """Extrai (tipo, texto) de um bloco, seja objeto do SDK ou dict persistido."""
+    if isinstance(b, dict):
+        return b.get("type"), b.get("text", "")
+    return getattr(b, "type", None), getattr(b, "text", "")
 
 
 def _transcricao(conversa):
@@ -78,16 +94,14 @@ def _transcricao(conversa):
         content = m.get("content")
         if role == "user" and isinstance(content, str):
             linhas.append(f"Cliente: {content}")
-        elif role == "assistant":
-            if isinstance(content, list):
-                txt = "".join(
-                    getattr(b, "text", "") for b in content
-                    if getattr(b, "type", None) == "text"
-                ).strip()
-                if txt:
-                    linhas.append(f"Agente: {txt}")
-            elif isinstance(content, str) and content.strip():
-                linhas.append(f"Agente: {content.strip()}")
+        elif role == "assistant" and isinstance(content, list):
+            txt = "".join(
+                t for (typ, t) in (_bloco_tipo_texto(b) for b in content) if typ == "text"
+            ).strip()
+            if txt:
+                linhas.append(f"Agente: {txt}")
+        elif role == "assistant" and isinstance(content, str) and content.strip():
+            linhas.append(f"Agente: {content.strip()}")
     return "\n".join(linhas)
 
 
@@ -168,8 +182,7 @@ Motivo: {conversa.get('motivo_escalonamento', '')}
                      "Content-Type": "application/json"},
             json={
                 "from": "Allycar <booking@allycar.com>",
-                "to": ["booking@allycar.com", "david@allycar.com",
-                       "higor@allycar.com", "bruno@allycar.com"],
+                "to": ["david@allycar.com", "bruno@allycar.com", "higor@allycar.com"],
                 "subject": assunto,
                 "text": conteudo,
             },
@@ -415,6 +428,79 @@ def agent_chat_reset():
 def agent_ui():
     """Página simples de chat para testar o agente."""
     return _CHAT_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ------- dashboard dos leads (lê direto do Postgres) -------
+@app.route("/agent/leads/data", methods=["GET"])
+def agent_leads_data():
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    itens = []
+    for row in agent_store.listar():
+        st = row.get("state") or {}
+        itens.append({
+            "nome": st.get("name", "Cliente"),
+            "telefone": st.get("phone", ""),
+            "idioma": st.get("language", ""),
+            "situacao": ("Reservou" if st.get("reservou")
+                         else ("Consultor" if st.get("escalar") else "Em conversa")),
+            "motivo": st.get("motivo_escalonamento", ""),
+            "atualizado": row.get("updated_at"),
+            "transcricao": _transcricao(st),
+        })
+    return {"total": len(itens), "leads": itens}, 200
+
+
+@app.route("/agent/leads", methods=["GET"])
+def agent_leads_ui():
+    if not _dash_ok():
+        return "Não autorizado. Adicione ?token=SEU_TOKEN à URL.", 401
+    return _LEADS_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+_LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allycar — Leads do Agente</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b141a;color:#e9edef;margin:0}
+  header{background:#202c33;padding:14px 18px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px;border-bottom:1px solid #22303a;font-size:14px;vertical-align:top}
+  th{color:#8696a0;font-weight:600}
+  .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+  .Reservou{background:#0b6b3a;color:#d7ffe8}
+  .Consultor{background:#7a4a12;color:#ffe8c7}
+  .Em{background:#334; color:#cdd}
+  button{background:#2a3942;color:#e9edef;border:none;border-radius:6px;padding:5px 10px;cursor:pointer}
+  pre{white-space:pre-wrap;background:#111b21;padding:10px;border-radius:8px;margin:8px 0 0;font-size:13px;line-height:1.4}
+</style></head><body>
+<header><span>📊 Allycar — Leads do Agente</span><button onclick="load()">Atualizar</button></header>
+<div class="wrap"><div id="info" style="color:#8696a0;margin-bottom:8px"></div>
+<table><thead><tr><th>Nome</th><th>Telefone</th><th>Idioma</th><th>Situação</th><th>Atualizado</th><th></th></tr></thead>
+<tbody id="rows"></tbody></table></div>
+<script>
+const token=new URLSearchParams(location.search).get('token')||'';
+function tag(s){const c=s==='Em conversa'?'Em':s;return `<span class="tag ${c}">${s}</span>`;}
+async function load(){
+  const r=await fetch('/agent/leads/data'+(token?('?token='+encodeURIComponent(token)):''));
+  if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
+  const j=await r.json();
+  document.getElementById('info').textContent=j.total+' conversa(s)';
+  const tb=document.getElementById('rows');tb.innerHTML='';
+  j.leads.forEach((l,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
+      <td>${tag(l.situacao)}</td><td>${l.atualizado||''}</td>
+      <td><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button></td>`;
+    tb.appendChild(tr);
+    const tr2=document.createElement('tr');
+    tr2.innerHTML=`<td colspan="6"><pre id="t${i}" style="display:none">${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></td>`;
+    tb.appendChild(tr2);
+  });
+}
+load();
+</script></body></html>"""
 
 
 _CHAT_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">

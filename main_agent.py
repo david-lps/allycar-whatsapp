@@ -409,36 +409,49 @@ def responder_agente(conversa, mensagem_usuario, max_iteracoes=6):
     if nome and nome != "Cliente" and not nome.startswith("teste-web"):
         contexto_dia += f" O cliente se chama {nome} — trate-o pelo primeiro nome quando fizer sentido."
 
-    for _ in range(max_iteracoes):
-        resposta = client.messages.create(
-            model=MODELO,
-            max_tokens=1024,
-            system=[
-                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": contexto_dia},
-            ],
-            thinking={"type": "adaptive"},
-            output_config={"effort": "low"},
-            tools=TOOLS,
-            messages=mensagens,
-        )
-        mensagens.append({"role": "assistant", "content": resposta.content})
+    try:
+        for _ in range(max_iteracoes):
+            resposta = client.messages.create(
+                model=MODELO,
+                max_tokens=1024,
+                system=[
+                    {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": contexto_dia},
+                ],
+                thinking={"type": "adaptive"},
+                output_config={"effort": "low"},
+                tools=TOOLS,
+                messages=mensagens,
+            )
+            mensagens.append({"role": "assistant", "content": resposta.content})
 
-        if resposta.stop_reason == "tool_use":
-            resultados = []
-            for bloco in resposta.content:
-                if bloco.type == "tool_use":
-                    resultado, _ = _executar_ferramenta(bloco.name, bloco.input, conversa)
-                    resultados.append({
-                        "type": "tool_result",
-                        "tool_use_id": bloco.id,
-                        "content": json.dumps(resultado, ensure_ascii=False),
-                    })
-            mensagens.append({"role": "user", "content": resultados})
-            continue
+            if resposta.stop_reason == "tool_use":
+                resultados = []
+                for bloco in resposta.content:
+                    if bloco.type == "tool_use":
+                        resultado, _ = _executar_ferramenta(bloco.name, bloco.input, conversa)
+                        resultados.append({
+                            "type": "tool_result",
+                            "tool_use_id": bloco.id,
+                            "content": json.dumps(resultado, ensure_ascii=False),
+                        })
+                mensagens.append({"role": "user", "content": resultados})
+                continue
 
-        texto_final = "".join(b.text for b in resposta.content if b.type == "text").strip()
-        break
+            texto_final = "".join(b.text for b in resposta.content if b.type == "text").strip()
+            break
+    except Exception as e:
+        # Rota de fuga: falha na API (ex: créditos/limite) NÃO rompe a conversa —
+        # avisa o cliente com leveza e escala para um consultor humano.
+        print(f"⚠️ Falha na API do agente: {type(e).__name__}: {e}")
+        conversa["history"] = mensagens
+        conversa["escalar"] = True
+        conversa["motivo_escalonamento"] = f"Falha técnica no agente ({type(e).__name__}) — consultor deve assumir a conversa."
+        if idioma.startswith("es"):
+            fb = "¡Gracias por tu mensaje! 😊 En un momento un asesor continuará contigo por aquí mismo."
+        else:
+            fb = "Obrigado pela sua mensagem! 😊 Em instantes um consultor vai continuar o atendimento com você por aqui."
+        return {"texto": fb, "escalar": True, "reservou": bool(conversa.get("reservou"))}
 
     conversa["history"] = mensagens
     return {

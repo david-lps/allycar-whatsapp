@@ -142,3 +142,26 @@ def contar():
         return len(_mem)
     finally:
         conn.close()
+
+
+def listar(limit=300):
+    """Lista as conversas (mais recentes primeiro) para o dashboard."""
+    if not ATIVO:
+        return [{"key": k, "state": v, "updated_at": None} for k, v in list(_mem.items())[:limit]]
+    conn = _conn()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT key, state, updated_at FROM agent_conversas "
+                "ORDER BY updated_at DESC LIMIT %s", (limit,)
+            )
+            return [
+                {"key": r[0], "state": r[1],
+                 "updated_at": r[2].strftime("%Y-%m-%d %H:%M") if r[2] else None}
+                for r in cur.fetchall()
+            ]
+    except Exception as e:
+        print(f"⚠️ agent_store: falha ao listar: {e}")
+        return []
+    finally:
+        conn.close()
