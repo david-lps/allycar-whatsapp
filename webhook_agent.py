@@ -442,7 +442,7 @@ def agent_leads_data():
             "nome": st.get("name", "Cliente"),
             "telefone": st.get("phone", ""),
             "idioma": st.get("language", ""),
-            "situacao": ("Reservou" if st.get("reservou")
+            "situacao": ("Solicitou reserva" if st.get("reservou")
                          else ("Consultor" if st.get("escalar") else "Em conversa")),
             "motivo": st.get("motivo_escalonamento", ""),
             "atualizado": row.get("updated_at"),
@@ -481,7 +481,7 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <tbody id="rows"></tbody></table></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
-function tag(s){const c=s==='Em conversa'?'Em':s;return `<span class="tag ${c}">${s}</span>`;}
+function tag(s){const map={'Solicitou reserva':'Reservou','Consultor':'Consultor','Em conversa':'Em'};return `<span class="tag ${map[s]||'Em'}">${s}</span>`;}
 async function load(){
   const r=await fetch('/agent/leads/data'+(token?('?token='+encodeURIComponent(token)):''));
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
