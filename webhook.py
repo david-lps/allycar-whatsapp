@@ -1511,7 +1511,8 @@ def braza_pix():
 
 @app.route('/api/braza/cc-session', methods=['POST', 'OPTIONS'])
 def braza_cc_session():
-    """Cria a sessão de cartão e devolve a URL hospedada da Braza."""
+    """Cria a pré-sessão de cartão (fluxo advanced) e devolve a URL hospedada.
+    A URL de pagamento é montada a partir do cod_quote (não de uuid)."""
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
     try:
@@ -1522,8 +1523,8 @@ def braza_cc_session():
         brl_quantity = data.get('brl_quantity') or data.get('brlQuantity')
         if not cod_quote or not cod_customer or not brl_quantity:
             return _braza_json({'ok': False, 'error': 'cod_quote, cod_customer e brl_quantity são obrigatórios'}, 400)
-        session = braza.create_cc_session(cod_quote, cod_customer, installments)
-        url = braza.cc_payment_url(session.get('uuid'), brl_quantity, installments)
+        session = braza.create_cc_presession(cod_quote, cod_customer, installments)
+        url = braza.cc_payment_url(cod_quote, brl_quantity, installments)
         return _braza_json({'ok': True, 'session': session, 'payment_url': url})
     except Exception as e:
         return _braza_fail(e)
