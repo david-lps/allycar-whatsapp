@@ -1574,8 +1574,35 @@ def _hq_register_payment(order_ref, amount, label):
 _braza_notified = set()   # cod_quotes já avisados — evita e-mail duplicado
 
 
-def _notify_team_payment(order_ref, status, amount_brl, method):
-    """Avisa a equipe por e-mail (Resend) sobre a mudança de pagamento."""
+def _notify_team_payment(order_ref, status, amount_usd, method):
+    """Avisa a equipe por e-mail (Resend) sobre a mudança de pagamento.
+    amount_usd = sale.amount, que é o valor em USD (não BRL)."""
+    status = (status or '').upper()
+
+    if status == 'PAID':
+        subject = f'✅ Pagamento CONFIRMADO ({method}) - reserva {order_ref} - AÇÃO em até 2h'
+        body = (
+            'Pagamento CONFIRMADO via BrazaBank.\n\n'
+            f'Reserva HQ: {order_ref}\n'
+            f'Status: {status}\n'
+            f'Metodo: {method}\n'
+            f'Valor USD: {amount_usd}\n\n'
+            'Próximos passos (DEVE SER FEITO EM ATÉ 2 HORAS):\n\n'
+            f'Acessar a reserva {order_ref} no sistema HQ, entrar no "step 6 - Payments" e inserir '
+            'manualmente um pagamento no botão "Add Offline Payment" com o valor acima.\n\n'
+            'Logo em seguida verificar se ficou algum Outstanding Balance, uma vez que para pagamentos '
+            'como PIX oferecemos descontos por fora.\n\n'
+            'Em caso da necessidade de ajustar o Balance, adicionar manualmente o desconto correspondente '
+            'na seção "Discounts", logo abaixo, através do botão "Add Discount".'
+        )
+    else:
+        subject = f'Pagamento {status} ({method}) - reserva {order_ref}'
+        body = (
+            f'Pagamento {status} via BrazaBank.\n\n'
+            f'Reserva HQ: {order_ref}\nStatus: {status}\nMetodo: {method}\nValor USD: {amount_usd}\n\n'
+            'Verifique a reserva na HQ, se necessário.'
+        )
+
     try:
         requests.post(
             'https://api.resend.com/emails',
@@ -1583,10 +1610,8 @@ def _notify_team_payment(order_ref, status, amount_brl, method):
                      'Content-Type': 'application/json'},
             json={'from': 'Allycar <booking@allycar.com>',
                   'to': ['higor@allycar.com', 'bruno@allycar.com', 'david@allycar.com'],
-                  'subject': f'Pagamento {status} ({method}) - reserva {order_ref}',
-                  'text': ('Pagamento via BrazaBank.\n\n'
-                           f'Reserva HQ: {order_ref}\nStatus: {status}\nMetodo: {method}\nValor BRL: {amount_brl}\n\n'
-                           'Acao: dar baixa desta reserva na HQ (enquanto o webhook automatico nao fica ativo).')},
+                  'subject': subject,
+                  'text': body},
             timeout=10)
     except Exception as e:
         print(f'[braza] e-mail ignorado: {e}')
@@ -1653,13 +1678,13 @@ def braza_webhook():
         if cod_quote and status in ('PAID', 'REFUNDED', 'EXPIRED'):
             sale = braza.get_sale(cod_quote)
             order_ref  = sale.get('identifier')
-            amount_brl = sale.get('amount')
+            amount_usd = sale.get('amount')   # sale.amount é o valor em USD
             method     = sale.get('paymentMethod', 'braza')
             if cod_quote not in _braza_notified:                          # dedup c/ o /confirm
                 _braza_notified.add(cod_quote)
-                _notify_team_payment(order_ref, status, amount_brl, method)
+                _notify_team_payment(order_ref, status, amount_usd, method)
             if status == 'PAID':
-                _hq_register_payment(order_ref, amount_brl, method)
+                _hq_register_payment(order_ref, amount_usd, method)
     except Exception as e:
         print(f'[braza/webhook] erro: {e}')
     return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
