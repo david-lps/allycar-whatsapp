@@ -8,6 +8,8 @@ from email.mime.multipart import MIMEMultipart
 from main import conectar_google_sheets
 from datetime import datetime
 import os
+import time
+import threading
 import requests
 import braza   # integração BrazaBank Checkout v2 (PIX + cartão)
 
@@ -1525,6 +1527,15 @@ def braza_cc_session():
             return _braza_json({'ok': False, 'error': 'cod_quote, cod_customer e brl_quantity são obrigatórios'}, 400)
         session = braza.create_cc_presession(cod_quote, cod_customer, installments)
         url = braza.cc_payment_url(cod_quote, brl_quantity, installments)
+        # B2: inicia o vigia p/ disparar o e-mail quando o cartão for aprovado
+        try:
+            threading.Thread(
+                target=_watch_cc_payment,
+                args=(cod_quote, session.get('expiresIn') if isinstance(session, dict) else 0),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            print(f'[braza/cc-session] não iniciou o vigia: {e}')
         return _braza_json({'ok': True, 'session': session, 'payment_url': url})
     except Exception as e:
         return _braza_fail(e)
@@ -1616,6 +1627,39 @@ def _notify_team_payment(order_ref, status, amount_usd, method):
             timeout=10)
     except Exception as e:
         print(f'[braza] e-mail ignorado: {e}')
+
+
+def _watch_cc_payment(cod_quote, expires_in=0):
+    """
+    B2 — 'vigia' do pagamento por cartão. Como no cartão o cliente sai da nossa
+    página, o servidor consulta o status ele mesmo até aprovar e dispara o e-mail.
+    É best-effort (thread não sobrevive a restart do serviço; a Braza não tem
+    webhook — polling é o método oficial deles). Compartilha o _braza_notified
+    para não duplicar com o /confirm nem entre si.
+    """
+    window = min((int(expires_in) if expires_in else 1800) + 60, 40 * 60)  # cap 40 min
+    deadline = time.time() + window
+    while time.time() < deadline:
+        try:
+            st = braza.cc_status(cod_quote)
+            if st.get('isApproved') is True:
+                if cod_quote in _braza_notified:
+                    return
+                _braza_notified.add(cod_quote)
+                try:
+                    sale = braza.get_sale(cod_quote)
+                except Exception:
+                    sale = {}
+                order_ref = sale.get('identifier') or cod_quote
+                amount    = sale.get('amount')
+                method    = sale.get('paymentMethod') or 'cartao'
+                _notify_team_payment(order_ref, 'PAID', amount, method)
+                print(f'[braza/cc-watch] aprovado e notificado (cod_quote={cod_quote})')
+                return
+        except Exception as e:
+            print(f'[braza/cc-watch] erro consultando status: {e}')
+        time.sleep(7)
+    print(f'[braza/cc-watch] encerrado sem aprovação (cod_quote={cod_quote})')
 
 
 @app.route('/api/braza/confirm', methods=['POST', 'OPTIONS'])
