@@ -1525,15 +1525,17 @@ def braza_cc_session():
         brl_quantity = data.get('brl_quantity') or data.get('brlQuantity')
         if not cod_quote or not cod_customer or not brl_quantity:
             return _braza_json({'ok': False, 'error': 'cod_quote, cod_customer e brl_quantity são obrigatórios'}, 400)
-        session = braza.create_cc_presession(cod_quote, cod_customer, installments)
-        url = braza.cc_payment_url(cod_quote, brl_quantity, installments)
+        session = braza.create_cc_session(cod_quote, cod_customer, installments)
+        cc_uuid = session.get('uuid') if isinstance(session, dict) else None
+        url = braza.cc_payment_url(cc_uuid, brl_quantity, installments)
         # B2: inicia o vigia p/ disparar o e-mail quando o cartão for aprovado
         try:
-            threading.Thread(
-                target=_watch_cc_payment,
-                args=(cod_quote, session.get('expiresIn') if isinstance(session, dict) else 0),
-                daemon=True,
-            ).start()
+            if cc_uuid:
+                threading.Thread(
+                    target=_watch_cc_payment,
+                    args=(cc_uuid, cod_quote),
+                    daemon=True,
+                ).start()
         except Exception as e:
             print(f'[braza/cc-session] não iniciou o vigia: {e}')
         return _braza_json({'ok': True, 'session': session, 'payment_url': url})
@@ -1629,19 +1631,19 @@ def _notify_team_payment(order_ref, status, amount_usd, method):
         print(f'[braza] e-mail ignorado: {e}')
 
 
-def _watch_cc_payment(cod_quote, expires_in=0):
+def _watch_cc_payment(cc_uuid, cod_quote, expires_in=0):
     """
     B2 — 'vigia' do pagamento por cartão. Como no cartão o cliente sai da nossa
     página, o servidor consulta o status ele mesmo até aprovar e dispara o e-mail.
-    É best-effort (thread não sobrevive a restart do serviço; a Braza não tem
-    webhook — polling é o método oficial deles). Compartilha o _braza_notified
-    para não duplicar com o /confirm nem entre si.
+    Consulta cc_status(cc_uuid) (uuid da sessão); usa cod_quote p/ get_sale e dedup.
+    Best-effort (thread não sobrevive a restart; a Braza não tem webhook — polling
+    é o método oficial). Compartilha _braza_notified p/ não duplicar com o /confirm.
     """
     window = min((int(expires_in) if expires_in else 1800) + 60, 40 * 60)  # cap 40 min
     deadline = time.time() + window
     while time.time() < deadline:
         try:
-            st = braza.cc_status(cod_quote)
+            st = braza.cc_status(cc_uuid)
             if st.get('isApproved') is True:
                 if cod_quote in _braza_notified:
                     return
@@ -1654,7 +1656,7 @@ def _watch_cc_payment(cod_quote, expires_in=0):
                 amount    = sale.get('amount')
                 method    = sale.get('paymentMethod') or 'cartao'
                 _notify_team_payment(order_ref, 'PAID', amount, method)
-                print(f'[braza/cc-watch] aprovado e notificado (cod_quote={cod_quote})')
+                print(f'[braza/cc-watch] aprovado e notificado (uuid={cc_uuid} cod_quote={cod_quote})')
                 return
         except Exception as e:
             print(f'[braza/cc-watch] erro consultando status: {e}')

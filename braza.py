@@ -168,35 +168,34 @@ def pix_status(pix_id):
     return r.json()
 
 
-# ── 3b. Cartão de crédito (fluxo 'advanced' do guia oficial) ─────────────────
-def create_cc_presession(cod_quote, cod_customer, installments):
+# ── 3b. Cartão de crédito (fluxo da brazabank_doc: session -> cc-checkout) ────
+def create_cc_session(cod_quote, cod_customer, installments):
     """
-    Cria a PRÉ-SESSÃO de cartão (fluxo 'advanced'). Retorna { message, expiresIn }.
-    NÃO retorna uuid — a URL de pagamento é montada a partir do próprio cod_quote
-    (ver cc_payment_url). Só seguir se o 'pendent' do cliente NÃO contiver 'serpro'.
-    Mínimo de operação: 25 USD.
+    Cria a sessão de cartão (fluxo documentado na brazabank_doc — UX melhor,
+    vai direto pra tela do cartão + 3DS). Retorna uuid (usado na URL de pagamento
+    e no status) + session Adyen + amount.
     """
     r = requests.post(
-        f"{URL_CC}/v1/credit-card/pre-session",
+        f"{URL_CC}/v1/credit-card/session",
         headers=_headers(),
-        json={"codCustomer": cod_customer, "codQuote": cod_quote,
-              "flowType": "advanced", "numberOfInstallments": installments},
+        json={"codQuote": cod_quote, "codCustomer": cod_customer,
+              "numberOfInstallments": installments},
         timeout=_TIMEOUT,
     )
     r.raise_for_status()
     return r.json()
 
 
-def cc_payment_url(cod_quote, brl_quantity, installments):
-    """URL hospedada da Braza onde o cliente digita o cartão (fluxo advanced)."""
-    return (f"{URL_PAYMENT}/payment/cc-installments/{cod_quote}"
-            f"?brlQuantity={brl_quantity}&installments={installments}&flowType=advanced")
+def cc_payment_url(uuid, brl_quantity, installments):
+    """Monta a URL hospedada da Braza onde o cliente digita o cartão (fluxo cc-checkout)."""
+    return (f"{URL_APP}/payment/cc-checkout/{uuid}"
+            f"?brlQuantity={brl_quantity}&installments={installments}")
 
 
-def cc_status(cod_quote):
-    """Status do pagamento por cartão. Pago quando isApproved == true."""
+def cc_status(uuid):
+    """Status do pagamento por cartão (por uuid da sessão). Pago quando isApproved == true."""
     r = requests.get(
-        f"{URL_CC}/v1/credit-card/status/{cod_quote}",
+        f"{URL_CC}/v1/credit-card/status/{uuid}",
         headers={"Authorization": f"Bearer {_get_token()}", "Accept": "application/json"},
         timeout=_TIMEOUT,
     )
