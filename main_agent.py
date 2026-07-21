@@ -159,6 +159,7 @@ REGRAS DE OURO:
    contatá-lo. Em vez disso, ofereça com acolhimento várias opções de carros premium para uso
    DENTRO de Orlando e no raio de 30 milhas, com entrega e retirada por MOTORISTA PRÓPRIO da
    Allycar. Deixe claro: fora dessa área não atendemos, mas dentro dela cuidamos de tudo.
+   Ao identificar esse pedido fora da área, chame também marcar_fora_de_area (marcador interno).
 
 PREÇO — REGRA ABSOLUTA:
 - NUNCA invente preço e NUNCA use valores de memória. O ÚNICO preço válido vem da ferramenta
@@ -305,6 +306,15 @@ TOOLS = [
             "required": ["total_base_usd", "num_dias"],
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "marcar_fora_de_area",
+        "description": (
+            "Marque quando o cliente pedir RETIRADA ou DEVOLUÇÃO fora de Orlando ou do raio de "
+            "30 milhas (ex: devolver em Miami). Marcador INTERNO (não envia nada ao cliente). "
+            "Continue seguindo a regra de COBERTURA: recuse com educação e ofereça opções dentro da área."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
     },
     {
         "name": "marcar_intencao_compra",
@@ -465,6 +475,9 @@ def _executar_ferramenta(nome, entrada, conversa):
         return {"status": "consultor_acionado",
                 "instrucao": ("Um consultor humano vai finalizar a reserva e o pagamento com o cliente. "
                               "Avise o cliente de forma calorosa que o consultor já vai assumir; NÃO envie link nem peça cartão.")}, {"reservou": True, "escalar": True}
+    if nome == "marcar_fora_de_area":
+        conversa["fora_area"] = True
+        return {"status": "ok", "mensagem": "Registrado internamente. Siga a regra de COBERTURA: recuse com educação e ofereça opções dentro de Orlando + 30 milhas."}, {"fora_area": True}
     if nome == "marcar_intencao_compra":
         conversa["intencao"] = True
         if entrada.get("modelo"):

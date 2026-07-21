@@ -197,7 +197,8 @@ def _classificar(st):
 
     tc = _texto_cliente(st)
     ta = _texto_agente(st)
-    fora = any(k in ta for k in [
+    # Flag precisa (marcada pelo agente); heurística cobre conversas antigas
+    fora = bool(st.get("fora_area")) or any(k in ta for k in [
         "cobertura", "não atendemos", "nao atendemos", "no atendemos",
         "no podemos atender", "fora de orlando", "fuera de orlando",
     ])
