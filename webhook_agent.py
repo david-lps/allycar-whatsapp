@@ -145,6 +145,72 @@ def _resumo_lead(st):
     return " | ".join(partes) if partes else "—"
 
 
+# ------- classificação das conversas (para as estatísticas) -------
+def _tem_ferramenta(st, nome):
+    for m in st.get("history", []):
+        c = m.get("content")
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == nome:
+                    return True
+    return False
+
+
+def _texto_cliente(st):
+    return " ".join(
+        m.get("content") for m in st.get("history", [])
+        if m.get("role") == "user" and isinstance(m.get("content"), str)
+    ).lower()
+
+
+def _texto_agente(st):
+    partes = []
+    for m in st.get("history", []):
+        if m.get("role") == "assistant" and isinstance(m.get("content"), list):
+            for b in m["content"]:
+                typ, txt = _bloco_tipo_texto(b)
+                if typ == "text":
+                    partes.append(txt)
+    return " ".join(partes).lower()
+
+
+def _classificar(st):
+    """Classificação primária (exclusiva) + sinais secundários (heurísticos)."""
+    reservou = bool(st.get("reservou"))
+    intencao = bool(st.get("intencao"))
+    escalar = bool(st.get("escalar"))
+    viu_precos = _tem_ferramenta(st, "consultar_disponibilidade_precos")
+    tem_interacao = bool(_texto_cliente(st).strip())
+
+    if reservou:
+        cat = "Solicitou reserva"
+    elif intencao:
+        cat = "Quer alugar"
+    elif escalar:
+        cat = "Solicitou consultor"
+    elif viu_precos:
+        cat = "Viu opções/preços"
+    elif tem_interacao:
+        cat = "Em conversa"
+    else:
+        cat = "Sem interação"
+
+    tc = _texto_cliente(st)
+    ta = _texto_agente(st)
+    fora = any(k in ta for k in [
+        "cobertura", "não atendemos", "nao atendemos", "no atendemos",
+        "no podemos atender", "fora de orlando", "fuera de orlando",
+    ])
+    reclamou = any(k in tc for k in [
+        "caro", "mais barato", "más barato", "mas barato", "menos de",
+        "desconto", "descuento", "presupuesto", "orçamento", "orcamento",
+        "muito alto", "muy caro", "no tengo tanto",
+    ])
+    return {"categoria": cat, "viu_precos": viu_precos,
+            "com_intencao": (reservou or intencao),
+            "fora_orlando": fora, "reclamou_preco": reclamou}
+
+
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
 def _variantes_telefone(from_number):
     num = (from_number or "").replace("whatsapp:", "")
@@ -519,6 +585,117 @@ def agent_leads_ui():
     return _LEADS_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+@app.route("/agent/stats/data", methods=["GET"])
+def agent_stats_data():
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    from collections import Counter
+    cats = Counter()
+    total = viu = com_intencao = fora = reclamou = 0
+    for row in agent_store.listar(limit=5000):
+        st = row.get("state") or {}
+        c = _classificar(st)
+        cats[c["categoria"]] += 1
+        total += 1
+        if c["viu_precos"]:
+            viu += 1
+        if c["com_intencao"]:
+            com_intencao += 1
+        if c["fora_orlando"]:
+            fora += 1
+        if c["reclamou_preco"]:
+            reclamou += 1
+    ordem = ["Sem interação", "Em conversa", "Viu opções/preços",
+             "Quer alugar", "Solicitou reserva", "Solicitou consultor"]
+    categorias = [{"nome": n, "valor": cats.get(n, 0)} for n in ordem]
+    return {
+        "total": total,
+        "categorias": categorias,
+        "viu_precos": viu,
+        "com_intencao": com_intencao,
+        "reservou": cats.get("Solicitou reserva", 0),
+        "fora_orlando": fora,
+        "reclamou_preco": reclamou,
+    }, 200
+
+
+@app.route("/agent/stats", methods=["GET"])
+def agent_stats_ui():
+    if not _dash_ok():
+        return "Não autorizado. Adicione ?token=SEU_TOKEN à URL.", 401
+    return _STATS_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+_STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allycar — Estatísticas do Agente</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b141a;color:#e9edef;margin:0}
+  header{background:#202c33;padding:14px 18px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  header a{color:#8fd0ff;text-decoration:none;font-weight:600}
+  .wrap{max-width:1100px;margin:0 auto;padding:18px}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
+  .tile{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:14px}
+  .tile .n{font-size:28px;font-weight:700}
+  .tile .l{color:#8696a0;font-size:13px;margin-top:2px}
+  .tile .p{color:#5fd08a;font-size:12px;margin-top:4px}
+  h3{color:#cbd5db;margin:18px 0 10px}
+  .bar{display:flex;align-items:center;gap:10px;margin:8px 0}
+  .bar .lbl{width:180px;font-size:13px;color:#cdd6db;flex:none}
+  .bar .track{flex:1;background:#1a2730;border-radius:6px;overflow:hidden;height:22px}
+  .bar .fill{height:100%;border-radius:6px}
+  .bar .val{width:64px;text-align:right;font-size:13px;color:#e9edef;flex:none}
+  .funnel{display:flex;gap:10px;flex-wrap:wrap}
+  .step{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:12px 16px;flex:1;min-width:150px}
+  .step .n{font-size:24px;font-weight:700}
+  .step .l{color:#8696a0;font-size:12px}
+  .step .p{color:#8fd0ff;font-size:12px}
+</style></head><body>
+<header><span>📈 Allycar — Estatísticas do Agente</span>
+  <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
+<div class="wrap">
+  <div class="tiles" id="tiles"></div>
+  <h3>Funil de conversão</h3>
+  <div class="funnel" id="funnel"></div>
+  <h3>Classificação das conversas</h3>
+  <div id="bars"></div>
+  <h3>Sinais detectados</h3>
+  <div class="tiles" id="sinais"></div>
+</div>
+<script>
+const token=new URLSearchParams(location.search).get('token')||'';
+const q=token?('?token='+encodeURIComponent(token)):'';
+document.getElementById('leadsLink').href='/agent/leads'+q;
+const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Viu opções/preços':'#0f9488',
+  'Quer alugar':'#2f6fed','Solicitou reserva':'#12a150','Solicitou consultor':'#c2740c'};
+function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
+function tile(n,l,p){return `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div>${p?('<div class="p">'+p+'</div>'):''}</div>`;}
+async function load(){
+  const r=await fetch('/agent/stats/data'+q);
+  if(!r.ok){document.body.innerHTML='<p style="padding:20px">Não autorizado — adicione ?token= na URL.</p>';return;}
+  const d=await r.json();
+  document.getElementById('tiles').innerHTML=
+    tile(d.total,'Conversas no total','')+
+    tile(d.viu_precos,'Viram preços',pct(d.viu_precos,d.total))+
+    tile(d.com_intencao,'Com intenção de alugar',pct(d.com_intencao,d.total))+
+    tile(d.reservou,'Solicitaram reserva',pct(d.reservou,d.total));
+  document.getElementById('funnel').innerHTML=
+    `<div class="step"><div class="n">${d.total}</div><div class="l">Conversas</div></div>`+
+    `<div class="step"><div class="n">${d.viu_precos}</div><div class="l">Viram preços</div><div class="p">${pct(d.viu_precos,d.total)} do total</div></div>`+
+    `<div class="step"><div class="n">${d.com_intencao}</div><div class="l">Intenção de alugar</div><div class="p">${pct(d.com_intencao,d.viu_precos)} de quem viu preço</div></div>`+
+    `<div class="step"><div class="n">${d.reservou}</div><div class="l">Solicitou reserva</div><div class="p">${pct(d.reservou,d.total)} do total</div></div>`;
+  const max=Math.max(1,...d.categorias.map(c=>c.valor));
+  document.getElementById('bars').innerHTML=d.categorias.map(c=>
+    `<div class="bar"><div class="lbl">${c.nome}</div><div class="track"><div class="fill" style="width:${Math.round(c.valor*100/max)}%;background:${CORES[c.nome]||'#4b7ea3'}"></div></div><div class="val">${c.valor}</div></div>`
+  ).join('');
+  document.getElementById('sinais').innerHTML=
+    tile(d.fora_orlando,'Fora de Orlando (heurístico)',pct(d.fora_orlando,d.total))+
+    tile(d.reclamou_preco,'Reclamou de preço (heurístico)',pct(d.reclamou_preco,d.total));
+}
+load();
+</script></body></html>"""
+
+
 _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Allycar — Leads do Agente</title>
@@ -537,12 +714,13 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   button{background:#2a3942;color:#e9edef;border:none;border-radius:6px;padding:5px 10px;cursor:pointer}
   pre{white-space:pre-wrap;background:#111b21;padding:10px;border-radius:8px;margin:8px 0 0;font-size:13px;line-height:1.4}
 </style></head><body>
-<header><span>📊 Allycar — Leads do Agente</span><button onclick="load()">Atualizar</button></header>
+<header><span>📊 Allycar — Leads do Agente</span><span><a id="statsLink" href="#" style="color:#8fd0ff;text-decoration:none;font-weight:600;margin-right:14px">📈 Estatísticas</a><button onclick="load()">Atualizar</button></span></header>
 <div class="wrap"><div id="info" style="color:#8696a0;margin-bottom:8px"></div>
 <table><thead><tr><th>Nome</th><th>Telefone</th><th>Idioma</th><th>Situação</th><th>Resumo (datas · carro · preços)</th><th>Atualizado</th><th></th></tr></thead>
 <tbody id="rows"></tbody></table></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
+document.getElementById('statsLink').href='/agent/stats'+(token?('?token='+encodeURIComponent(token)):'');
 function tag(s){const map={'Solicitou reserva':'Reservou','Quer alugar':'QuerAlugar','Consultor':'Consultor','Em conversa':'Em'};return `<span class="tag ${map[s]||'Em'}">${s}</span>`;}
 async function load(){
   const r=await fetch('/agent/leads/data'+(token?('?token='+encodeURIComponent(token)):''));
