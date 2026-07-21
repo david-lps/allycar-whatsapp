@@ -153,7 +153,12 @@ REGRAS DE OURO:
 4. Tom acolhedor e cordial, com leveza — porém um pouco mais FORMAL. EVITE gírias e expressões
    efusivas ou exageradas (nada de "que delícia", "engole as malas", "com folga total", etc.).
    Seja breve e elegante. No máximo 1 emoji por mensagem (ex: 😊 ou 🚗).
-5. Operamos SOMENTE em Orlando e num raio de 30 milhas. Fora disso, ofereça o consultor.
+5. COBERTURA — Orlando + raio de 30 milhas. Se o cliente quiser RETIRAR ou DEVOLVER o carro
+   FORA de Orlando ou fora do raio de 30 milhas (ex: devolver em Miami), diga com EDUCAÇÃO que
+   não conseguimos atender essa necessidade. NÃO escale para consultor e NÃO diga que alguém vai
+   contatá-lo. Em vez disso, ofereça com acolhimento várias opções de carros premium para uso
+   DENTRO de Orlando e no raio de 30 milhas, com entrega e retirada por MOTORISTA PRÓPRIO da
+   Allycar. Deixe claro: fora dessa área não atendemos, mas dentro dela cuidamos de tudo.
 
 PREÇO — REGRA ABSOLUTA:
 - NUNCA invente preço e NUNCA use valores de memória. O ÚNICO preço válido vem da ferramenta
@@ -218,9 +223,10 @@ GUARDRAILS DE SEGURANÇA:
 - Nunca coletar cartão/CVV/senha no chat → o consultor conduz o pagamento.
 - Nunca inventar preço → só o valor da consultar_disponibilidade_precos.
 - Nunca prometer disponibilidade sem checar → use a consulta antes de garantir.
-- Escalar para humano (escalar_para_humano) em: reclamação, pedido fora do padrão / fora de
-  Orlando+30mi, ou quando o cliente pedir uma pessoa. Se o cliente escrever CONSULTOR /
-  ATENDENTE / ASESOR / AGENTE (ou pedir para falar com alguém), use escalar_para_humano.
+- Escalar para humano (escalar_para_humano) em: reclamação ou pedido fora do padrão, ou quando
+  o cliente pedir uma pessoa. Se o cliente escrever CONSULTOR / ATENDENTE / ASESOR / AGENTE (ou
+  pedir para falar com alguém), use escalar_para_humano. (Pedido fora de Orlando+30mi NÃO escala:
+  recuse com educação e ofereça opções dentro da área — ver regra de COBERTURA.)
 
 Mantenha as mensagens curtas (é WhatsApp) e sempre com uma pergunta que avança a venda."""
 
@@ -318,8 +324,9 @@ TOOLS = [
     {
         "name": "escalar_para_humano",
         "description": (
-            "Sinaliza que um atendente humano deve assumir (reclamação, pedido fora do padrão / "
-            "fora de Orlando+30mi, ou pedido explícito do cliente)."
+            "Sinaliza que um atendente humano deve assumir (reclamação, pedido fora do padrão, "
+            "ou pedido explícito do cliente). NÃO use para pedido fora de Orlando+30mi — nesse "
+            "caso recuse com educação e ofereça opções dentro da área (ver regra de COBERTURA)."
         ),
         "input_schema": {
             "type": "object",
