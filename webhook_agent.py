@@ -609,8 +609,10 @@ def agent_stats_data():
     ordem = ["Sem interação", "Em conversa", "Viu opções/preços",
              "Quer alugar", "Solicitou reserva", "Solicitou consultor"]
     categorias = [{"nome": n, "valor": cats.get(n, 0)} for n in ordem]
+    com_interacao = total - cats.get("Sem interação", 0)
     return {
         "total": total,
+        "com_interacao": com_interacao,
         "categorias": categorias,
         "viu_precos": viu,
         "com_intencao": com_intencao,
@@ -645,7 +647,8 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .bar .lbl{width:180px;font-size:13px;color:#cdd6db;flex:none}
   .bar .track{flex:1;background:#1a2730;border-radius:6px;overflow:hidden;height:22px}
   .bar .fill{height:100%;border-radius:6px}
-  .bar .val{width:64px;text-align:right;font-size:13px;color:#e9edef;flex:none}
+  .bar .val{width:44px;text-align:right;font-size:13px;color:#e9edef;flex:none;font-weight:600}
+  .bar .pctcol{width:230px;text-align:right;font-size:12px;color:#8696a0;flex:none}
   .funnel{display:flex;gap:10px;flex-wrap:wrap}
   .step{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:12px 16px;flex:1;min-width:150px}
   .step .n{font-size:24px;font-weight:700}
@@ -669,29 +672,34 @@ const q=token?('?token='+encodeURIComponent(token)):'';
 document.getElementById('leadsLink').href='/agent/leads'+q;
 const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Viu opções/preços':'#0f9488',
   'Quer alugar':'#2f6fed','Solicitou reserva':'#12a150','Solicitou consultor':'#c2740c'};
+let d={total:0,com_interacao:0};
 function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
+function P(a){return pct(a,d.total);}          // % sobre o total
+function I(a){return pct(a,d.com_interacao);}   // % sobre quem interagiu
+function both(a){return P(a)+' do total · '+I(a)+' c/ interação';}
 function tile(n,l,p){return `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div>${p?('<div class="p">'+p+'</div>'):''}</div>`;}
 async function load(){
   const r=await fetch('/agent/stats/data'+q);
   if(!r.ok){document.body.innerHTML='<p style="padding:20px">Não autorizado — adicione ?token= na URL.</p>';return;}
-  const d=await r.json();
+  d=await r.json();
   document.getElementById('tiles').innerHTML=
     tile(d.total,'Conversas no total','')+
-    tile(d.viu_precos,'Viram preços',pct(d.viu_precos,d.total))+
-    tile(d.com_intencao,'Com intenção de alugar',pct(d.com_intencao,d.total))+
-    tile(d.reservou,'Solicitaram reserva',pct(d.reservou,d.total));
+    tile(d.com_interacao,'Com interação do lead',P(d.com_interacao)+' do total')+
+    tile(d.viu_precos,'Viram preços',both(d.viu_precos))+
+    tile(d.com_intencao,'Com intenção de alugar',both(d.com_intencao))+
+    tile(d.reservou,'Solicitaram reserva',both(d.reservou));
   document.getElementById('funnel').innerHTML=
     `<div class="step"><div class="n">${d.total}</div><div class="l">Conversas</div></div>`+
-    `<div class="step"><div class="n">${d.viu_precos}</div><div class="l">Viram preços</div><div class="p">${pct(d.viu_precos,d.total)} do total</div></div>`+
-    `<div class="step"><div class="n">${d.com_intencao}</div><div class="l">Intenção de alugar</div><div class="p">${pct(d.com_intencao,d.viu_precos)} de quem viu preço</div></div>`+
-    `<div class="step"><div class="n">${d.reservou}</div><div class="l">Solicitou reserva</div><div class="p">${pct(d.reservou,d.total)} do total</div></div>`;
+    `<div class="step"><div class="n">${d.com_interacao}</div><div class="l">Com interação</div><div class="p">${P(d.com_interacao)} do total</div></div>`+
+    `<div class="step"><div class="n">${d.viu_precos}</div><div class="l">Viram preços</div><div class="p">${I(d.viu_precos)} de quem interagiu</div></div>`+
+    `<div class="step"><div class="n">${d.reservou}</div><div class="l">Solicitou reserva</div><div class="p">${I(d.reservou)} de quem interagiu</div></div>`;
   const max=Math.max(1,...d.categorias.map(c=>c.valor));
   document.getElementById('bars').innerHTML=d.categorias.map(c=>
-    `<div class="bar"><div class="lbl">${c.nome}</div><div class="track"><div class="fill" style="width:${Math.round(c.valor*100/max)}%;background:${CORES[c.nome]||'#4b7ea3'}"></div></div><div class="val">${c.valor}</div></div>`
+    `<div class="bar"><div class="lbl">${c.nome}</div><div class="track"><div class="fill" style="width:${Math.round(c.valor*100/max)}%;background:${CORES[c.nome]||'#4b7ea3'}"></div></div><div class="val">${c.valor}</div><div class="pctcol">${c.nome==='Sem interação'?(P(c.valor)+' do total'):both(c.valor)}</div></div>`
   ).join('');
   document.getElementById('sinais').innerHTML=
-    tile(d.fora_orlando,'Fora de Orlando (heurístico)',pct(d.fora_orlando,d.total))+
-    tile(d.reclamou_preco,'Reclamou de preço (heurístico)',pct(d.reclamou_preco,d.total));
+    tile(d.fora_orlando,'Fora de Orlando',both(d.fora_orlando))+
+    tile(d.reclamou_preco,'Reclamou de preço (heurístico)',both(d.reclamou_preco));
 }
 load();
 </script></body></html>"""
