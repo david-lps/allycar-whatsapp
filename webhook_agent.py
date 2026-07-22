@@ -211,23 +211,30 @@ def _classificar(st):
 
 
 def _janela_info(st):
-    """Janela de 24h do WhatsApp a partir da última mensagem do cliente."""
+    """Janela de 24h do WhatsApp a partir da última mensagem do cliente.
+
+    Conversas anteriores ao registro de 'ultima_msg_cliente' não têm esse dado.
+    Nesse caso a janela fica 'desconhecida': não sabemos se ainda está aberta,
+    então mostramos a caixa de envio e deixamos o próprio WhatsApp validar no
+    momento do envio (se estiver fora das 24h, a Twilio recusa e avisamos)."""
     ts = st.get("ultima_msg_cliente")
     if not ts:
-        return {"aberta": False, "restante_min": 0, "label": "sem resposta do cliente"}
+        return {"estado": "desconhecida", "aberta": False, "restante_min": 0,
+                "label": "janela desconhecida (conversa anterior ao registro)"}
     try:
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
     except Exception:
-        return {"aberta": False, "restante_min": 0, "label": "—"}
-    restante = timedelta(hours=24) - (datetime.now(timezone.utc) - dt)
-    seg = restante.total_seconds()
+        return {"estado": "desconhecida", "aberta": False, "restante_min": 0,
+                "label": "janela desconhecida"}
+    seg = (timedelta(hours=24) - (datetime.now(timezone.utc) - dt)).total_seconds()
     if seg <= 0:
-        return {"aberta": False, "restante_min": 0, "label": "fechada (+24h)"}
+        return {"estado": "fechada", "aberta": False, "restante_min": 0,
+                "label": "fechada (+24h)"}
     m = int(seg // 60)
-    label = f"aberta · faltam {m // 60}h{m % 60:02d}m"
-    return {"aberta": True, "restante_min": m, "label": label}
+    return {"estado": "aberta", "aberta": True, "restante_min": m,
+            "label": f"aberta · faltam {m // 60}h{m % 60:02d}m"}
 
 
 # Filtros do painel: cada card leva a um conjunto de folhas (None = todos)
@@ -626,6 +633,7 @@ def agent_leads_data():
             "atualizado": row.get("updated_at"),
             "transcricao": _transcricao(st),
             "janela_aberta": jan["aberta"],
+            "janela_estado": jan["estado"],
             "janela_label": jan["label"],
             "humano": bool(st.get("humano")),
             "pode_enviar": bool((row.get("key") or "").startswith("whatsapp:")),
@@ -677,11 +685,14 @@ def agent_leads_enviar():
     if conversa is None:
         return {"error": "conversa não encontrada"}, 404
     jan = _janela_info(conversa)
-    if not jan["aberta"]:
-        return {"error": "Janela de 24h fechada — o WhatsApp não permite mensagem livre agora. O cliente precisa escrever primeiro."}, 400
+    if jan["estado"] == "fechada":
+        return {"error": "Janela de 24h fechada — o WhatsApp não permite mensagem livre agora. O cliente precisa escrever primeiro (ou use um template)."}, 400
     try:
         twilio_client.messages.create(from_=TWILIO_WHATSAPP_NUMBER, to=key, body=msg)
     except Exception as e:
+        txt = str(e)
+        if "63016" in txt or "outside" in txt.lower() or "window" in txt.lower():
+            return {"error": "O WhatsApp recusou: fora da janela de 24h. O cliente precisa escrever primeiro (ou use um template)."}, 400
         return {"error": f"Falha ao enviar: {e}"}, 500
     # registra no histórico e assume modo humano (agente para de responder)
     conversa.setdefault("history", []).append(
@@ -918,8 +929,11 @@ async function load(){
   const tb=document.getElementById('rows');tb.innerHTML='';
   j.leads.forEach((l,i)=>{
     const modo=l.humano?'<span title="atendimento manual" style="color:#ffd479">🧑 Humano</span>':'<span title="agente automático" style="color:#8fd0ff">🤖 Agente</span>';
-    const jan=l.janela_aberta
+    const est=l.janela_estado||(l.janela_aberta?'aberta':'fechada');
+    const jan= est==='aberta'
       ?`<span style="color:#7ee0a8">🟢 ${l.janela_label}</span>`
+      : est==='desconhecida'
+      ?`<span style="color:#ffd479">🟡 ${l.janela_label}</span>`
       :`<span style="color:#e0a0a0">🔴 ${l.janela_label}</span>`;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
@@ -935,8 +949,11 @@ async function load(){
       const btnModo=l.humano
         ?`<button style="background:#2a3942" onclick='modo(${JSON.stringify(key)},false)'>↩︎ devolver ao agente</button>`
         :`<button style="background:#3a2f14;color:#ffd479" onclick='modo(${JSON.stringify(key)},true)'>🧑 assumir manualmente</button>`;
-      const caixa=l.janela_aberta
-        ?`<div style="display:flex;gap:8px;margin-top:8px">
+      const notaDesc = est==='desconhecida'
+        ?`<div style="color:#ffd479;font-size:11px;margin-bottom:4px">Sem registro da última resposta do cliente (conversa anterior a esta função). Pode tentar enviar — se estiver fora das 24h, o WhatsApp recusa e avisamos aqui.</div>`
+        :'';
+      const caixa = est!=='fechada'
+        ?`${notaDesc}<div style="display:flex;gap:8px;margin-top:4px">
              <input id="m${i}" placeholder="Escreva um recado ao cliente…" style="flex:1;padding:9px;border-radius:8px;border:none;background:#2a3942;color:#e9edef">
              <button style="background:#00a884;color:#fff" onclick='enviar(${JSON.stringify(key)},${i})'>Enviar</button>
            </div>`
