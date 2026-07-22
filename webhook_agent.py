@@ -175,29 +175,13 @@ def _texto_agente(st):
 
 
 def _classificar(st):
-    """Classificação primária (exclusiva) + sinais secundários (heurísticos)."""
-    reservou = bool(st.get("reservou"))
-    intencao = bool(st.get("intencao"))
+    """Classificação ÚNICA e exclusiva da conversa (cada conversa em 1 bucket)."""
+    # "Quer alugar" (intenção) conta junto com "Solicitou reserva"
+    reservou = bool(st.get("reservou")) or bool(st.get("intencao"))
     escalar = bool(st.get("escalar"))
-    viu_precos = _tem_ferramenta(st, "consultar_disponibilidade_precos")
-    tem_interacao = bool(_texto_cliente(st).strip())
-
-    if reservou:
-        cat = "Solicitou reserva"
-    elif intencao:
-        cat = "Quer alugar"
-    elif escalar:
-        cat = "Solicitou consultor"
-    elif viu_precos:
-        cat = "Viu opções/preços"
-    elif tem_interacao:
-        cat = "Em conversa"
-    else:
-        cat = "Sem interação"
-
     tc = _texto_cliente(st)
     ta = _texto_agente(st)
-    # Flag precisa (marcada pelo agente); heurística cobre conversas antigas
+    # Fora de Orlando: flag precisa (agente) + heurística para conversas antigas
     fora = bool(st.get("fora_area")) or any(k in ta for k in [
         "cobertura", "não atendemos", "nao atendemos", "no atendemos",
         "no podemos atender", "fora de orlando", "fuera de orlando",
@@ -207,9 +191,24 @@ def _classificar(st):
         "desconto", "descuento", "presupuesto", "orçamento", "orcamento",
         "muito alto", "muy caro", "no tengo tanto",
     ])
-    return {"categoria": cat, "viu_precos": viu_precos,
-            "com_intencao": (reservou or intencao),
-            "fora_orlando": fora, "reclamou_preco": reclamou}
+    viu_precos = _tem_ferramenta(st, "consultar_disponibilidade_precos")
+    tem_interacao = bool(tc.strip())
+
+    if reservou:
+        cat = "Solicitou reserva"
+    elif fora:
+        cat = "Fora de Orlando"
+    elif escalar:
+        cat = "Solicitou consultor"
+    elif reclamou:
+        cat = "Reclamou de preço"
+    elif viu_precos:
+        cat = "Viu opções/preços"
+    elif tem_interacao:
+        cat = "Em conversa"
+    else:
+        cat = "Sem interação"
+    return {"categoria": cat}
 
 
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
@@ -545,10 +544,8 @@ def agent_leads_data():
     itens = []
     for row in agent_store.listar():
         st = row.get("state") or {}
-        if st.get("reservou"):
+        if st.get("reservou") or st.get("intencao"):
             situacao = "Solicitou reserva"
-        elif st.get("intencao"):
-            situacao = "Quer alugar"
         elif st.get("escalar"):
             situacao = "Consultor"
         else:
@@ -592,33 +589,20 @@ def agent_stats_data():
         return {"error": "não autorizado"}, 401
     from collections import Counter
     cats = Counter()
-    total = viu = com_intencao = fora = reclamou = 0
+    total = 0
     for row in agent_store.listar(limit=5000):
         st = row.get("state") or {}
-        c = _classificar(st)
-        cats[c["categoria"]] += 1
+        cats[_classificar(st)["categoria"]] += 1
         total += 1
-        if c["viu_precos"]:
-            viu += 1
-        if c["com_intencao"]:
-            com_intencao += 1
-        if c["fora_orlando"]:
-            fora += 1
-        if c["reclamou_preco"]:
-            reclamou += 1
-    ordem = ["Sem interação", "Em conversa", "Viu opções/preços",
-             "Quer alugar", "Solicitou reserva", "Solicitou consultor"]
+    ordem = ["Sem interação", "Em conversa", "Viu opções/preços", "Reclamou de preço",
+             "Fora de Orlando", "Solicitou consultor", "Solicitou reserva"]
     categorias = [{"nome": n, "valor": cats.get(n, 0)} for n in ordem]
     com_interacao = total - cats.get("Sem interação", 0)
     return {
         "total": total,
         "com_interacao": com_interacao,
-        "categorias": categorias,
-        "viu_precos": viu,
-        "com_intencao": com_intencao,
         "reservou": cats.get("Solicitou reserva", 0),
-        "fora_orlando": fora,
-        "reclamou_preco": reclamou,
+        "categorias": categorias,
     }, 200
 
 
@@ -659,19 +643,15 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
 <div class="wrap">
   <div class="tiles" id="tiles"></div>
-  <h3>Funil de conversão</h3>
-  <div class="funnel" id="funnel"></div>
   <h3>Classificação das conversas</h3>
   <div id="bars"></div>
-  <h3>Sinais detectados</h3>
-  <div class="tiles" id="sinais"></div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q=token?('?token='+encodeURIComponent(token)):'';
 document.getElementById('leadsLink').href='/agent/leads'+q;
 const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Viu opções/preços':'#0f9488',
-  'Quer alugar':'#2f6fed','Solicitou reserva':'#12a150','Solicitou consultor':'#c2740c'};
+  'Reclamou de preço':'#b0742a','Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Solicitou reserva':'#12a150'};
 let d={total:0,com_interacao:0};
 function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
 function P(a){return pct(a,d.total);}          // % sobre o total
@@ -685,21 +665,11 @@ async function load(){
   document.getElementById('tiles').innerHTML=
     tile(d.total,'Conversas no total','')+
     tile(d.com_interacao,'Com interação do lead',P(d.com_interacao)+' do total')+
-    tile(d.viu_precos,'Viram preços',both(d.viu_precos))+
-    tile(d.com_intencao,'Com intenção de alugar',both(d.com_intencao))+
-    tile(d.reservou,'Solicitaram reserva',both(d.reservou));
-  document.getElementById('funnel').innerHTML=
-    `<div class="step"><div class="n">${d.total}</div><div class="l">Conversas</div></div>`+
-    `<div class="step"><div class="n">${d.com_interacao}</div><div class="l">Com interação</div><div class="p">${P(d.com_interacao)} do total</div></div>`+
-    `<div class="step"><div class="n">${d.viu_precos}</div><div class="l">Viram preços</div><div class="p">${I(d.viu_precos)} de quem interagiu</div></div>`+
-    `<div class="step"><div class="n">${d.reservou}</div><div class="l">Solicitou reserva</div><div class="p">${I(d.reservou)} de quem interagiu</div></div>`;
+    tile(d.reservou,'Solicitou reserva',both(d.reservou));
   const max=Math.max(1,...d.categorias.map(c=>c.valor));
   document.getElementById('bars').innerHTML=d.categorias.map(c=>
     `<div class="bar"><div class="lbl">${c.nome}</div><div class="track"><div class="fill" style="width:${Math.round(c.valor*100/max)}%;background:${CORES[c.nome]||'#4b7ea3'}"></div></div><div class="val">${c.valor}</div><div class="pctcol">${c.nome==='Sem interação'?(P(c.valor)+' do total'):both(c.valor)}</div></div>`
   ).join('');
-  document.getElementById('sinais').innerHTML=
-    tile(d.fora_orlando,'Fora de Orlando',both(d.fora_orlando))+
-    tile(d.reclamou_preco,'Reclamou de preço (heurístico)',both(d.reclamou_preco));
 }
 load();
 </script></body></html>"""
