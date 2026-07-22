@@ -16,7 +16,7 @@ import os
 import json
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, request
 from dotenv import load_dotenv
@@ -210,6 +210,26 @@ def _classificar(st):
     return "Em conversa"
 
 
+def _janela_info(st):
+    """Janela de 24h do WhatsApp a partir da última mensagem do cliente."""
+    ts = st.get("ultima_msg_cliente")
+    if not ts:
+        return {"aberta": False, "restante_min": 0, "label": "sem resposta do cliente"}
+    try:
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return {"aberta": False, "restante_min": 0, "label": "—"}
+    restante = timedelta(hours=24) - (datetime.now(timezone.utc) - dt)
+    seg = restante.total_seconds()
+    if seg <= 0:
+        return {"aberta": False, "restante_min": 0, "label": "fechada (+24h)"}
+    m = int(seg // 60)
+    label = f"aberta · faltam {m // 60}h{m % 60:02d}m"
+    return {"aberta": True, "restante_min": m, "label": label}
+
+
 # Filtros do painel: cada card leva a um conjunto de folhas (None = todos)
 _RAMO_PRECO = {"Não teve continuidade", "Reclamou de preço", "Solicitou reserva"}
 FILTROS = {
@@ -333,6 +353,23 @@ def _processar(from_number, body):
         if conversa is None:
             key = from_number
             conversa = {"name": "Cliente", "phone": from_number.replace("whatsapp:", ""), "history": []}
+
+        # Marca a hora da última mensagem DO CLIENTE (abre/renova a janela de 24h)
+        conversa["ultima_msg_cliente"] = datetime.now(timezone.utc).isoformat()
+
+        # Modo humano: um consultor assumiu — o agente NÃO responde automaticamente.
+        if conversa.get("humano"):
+            conversa.setdefault("history", []).append({"role": "user", "content": body})
+            agent_store.salvar(key, conversa)
+            _registrar_planilha({
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "name": conversa.get("name", "Cliente"),
+                "phone": from_number.replace("whatsapp:", ""),
+                "category": "Atendimento humano",
+                "message": body,
+            })
+            print(f"🧑 Modo humano — mensagem de {from_number} registrada (agente não respondeu).")
+            return
 
         resultado = main_agent.responder_agente(conversa, body)
         texto = resultado["texto"]
@@ -576,6 +613,7 @@ def agent_leads_data():
         situacao = _classificar(st)  # mesma classificação-folha do funil
         if leafs is not None and situacao not in leafs:
             continue
+        jan = _janela_info(st)
         itens.append({
             "key": row.get("key"),
             "nome": st.get("name", "Cliente"),
@@ -587,6 +625,10 @@ def agent_leads_data():
             "motivo": st.get("motivo_escalonamento", ""),
             "atualizado": row.get("updated_at"),
             "transcricao": _transcricao(st),
+            "janela_aberta": jan["aberta"],
+            "janela_label": jan["label"],
+            "humano": bool(st.get("humano")),
+            "pode_enviar": bool((row.get("key") or "").startswith("whatsapp:")),
         })
     return {
         "total": len(itens),
@@ -617,6 +659,58 @@ def agent_leads_situacao():
         conversa.pop("situacao_manual", None)  # limpar → volta ao automático
     agent_store.salvar(key, conversa)
     return {"status": "ok", "key": key, "situacao": sit or "(automático)"}, 200
+
+
+@app.route("/agent/leads/enviar", methods=["POST"])
+def agent_leads_enviar():
+    """Envia um recado manual do consultor ao cliente (dentro da janela de 24h)."""
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    data = request.get_json(force=True, silent=True) or {}
+    key = (data.get("key") or "").strip()
+    msg = (data.get("mensagem") or "").strip()
+    if not key or not msg:
+        return {"error": "key e mensagem obrigatórios"}, 400
+    if not key.startswith("whatsapp:"):
+        return {"error": "esta conversa não é um WhatsApp real (ex: teste web)"}, 400
+    conversa = agent_store.carregar(key)
+    if conversa is None:
+        return {"error": "conversa não encontrada"}, 404
+    jan = _janela_info(conversa)
+    if not jan["aberta"]:
+        return {"error": "Janela de 24h fechada — o WhatsApp não permite mensagem livre agora. O cliente precisa escrever primeiro."}, 400
+    try:
+        twilio_client.messages.create(from_=TWILIO_WHATSAPP_NUMBER, to=key, body=msg)
+    except Exception as e:
+        return {"error": f"Falha ao enviar: {e}"}, 500
+    # registra no histórico e assume modo humano (agente para de responder)
+    conversa.setdefault("history", []).append(
+        {"role": "assistant", "content": [{"type": "text", "text": f"[Consultor] {msg}"}]}
+    )
+    conversa["humano"] = True
+    agent_store.salvar(key, conversa)
+    return {"status": "enviado", "key": key}, 200
+
+
+@app.route("/agent/leads/modo", methods=["POST"])
+def agent_leads_modo():
+    """Alterna entre atendimento humano e agente para uma conversa."""
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    data = request.get_json(force=True, silent=True) or {}
+    key = (data.get("key") or "").strip()
+    humano = bool(data.get("humano"))
+    if not key:
+        return {"error": "key obrigatório"}, 400
+    conversa = agent_store.carregar(key)
+    if conversa is None:
+        return {"error": "conversa não encontrada"}, 404
+    if humano:
+        conversa["humano"] = True
+    else:
+        conversa.pop("humano", None)  # devolve ao agente
+    agent_store.salvar(key, conversa)
+    return {"status": "ok", "humano": humano}, 200
 
 
 @app.route("/agent/leads/delete", methods=["POST"])
@@ -798,17 +892,50 @@ async function load(){
   }
   const tb=document.getElementById('rows');tb.innerHTML='';
   j.leads.forEach((l,i)=>{
+    const modo=l.humano?'<span title="atendimento manual" style="color:#ffd479">🧑 Humano</span>':'<span title="agente automático" style="color:#8fd0ff">🤖 Agente</span>';
+    const jan=l.janela_aberta
+      ?`<span style="color:#7ee0a8">🟢 ${l.janela_label}</span>`
+      :`<span style="color:#e0a0a0">🔴 ${l.janela_label}</span>`;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
       <td style="white-space:nowrap">${tag(l.situacao)}${l.situacao_manual?' <span title="ajustado manualmente" style="color:#8fd0ff">✎</span>':''}<br>${selectSit(l.key,l.situacao_manual)}</td>
-      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
+      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span></td>
       <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
     const tr2=document.createElement('tr');
-    tr2.innerHTML=`<td colspan="7"><pre id="t${i}" style="display:none">${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></td>`;
+    const key=l.key||'';
+    let painel='';
+    if(l.pode_enviar){
+      const btnModo=l.humano
+        ?`<button style="background:#2a3942" onclick='modo(${JSON.stringify(key)},false)'>↩︎ devolver ao agente</button>`
+        :`<button style="background:#3a2f14;color:#ffd479" onclick='modo(${JSON.stringify(key)},true)'>🧑 assumir manualmente</button>`;
+      const caixa=l.janela_aberta
+        ?`<div style="display:flex;gap:8px;margin-top:8px">
+             <input id="m${i}" placeholder="Escreva um recado ao cliente…" style="flex:1;padding:9px;border-radius:8px;border:none;background:#2a3942;color:#e9edef">
+             <button style="background:#00a884;color:#fff" onclick='enviar(${JSON.stringify(key)},${i})'>Enviar</button>
+           </div>`
+        :`<div style="margin-top:8px;color:#e0a0a0;font-size:12px">Janela de 24h fechada — o WhatsApp só permite mensagem livre depois que o cliente escrever de novo (ou via template).</div>`;
+      painel=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+                <span style="font-size:12px">Janela: ${jan}</span>${btnModo}</div>${caixa}<div id="s${i}" style="font-size:12px;margin-top:6px"></div>`;
+    }
+    tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}
+      <pre>${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></div></td>`;
     tb.appendChild(tr2);
   });
+}
+async function enviar(key,i){
+  const inp=document.getElementById('m'+i);const st=document.getElementById('s'+i);
+  const msg=(inp.value||'').trim();if(!msg){return;}
+  st.style.color='#8696a0';st.textContent='Enviando…';
+  const r=await fetch('/agent/leads/enviar'+qs(''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,mensagem:msg})});
+  const j=await r.json().catch(()=>({}));
+  if(r.ok){inp.value='';st.style.color='#7ee0a8';st.textContent='✓ enviado';setTimeout(load,600);}
+  else{st.style.color='#e0a0a0';st.textContent='✕ '+(j.error||'falha ao enviar');}
+}
+async function modo(key,humano){
+  await fetch('/agent/leads/modo'+qs(''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,humano})});
+  load();
 }
 const SITS=['Sem interação','Em conversa','Fora de Orlando','Solicitou consultor','Não teve continuidade','Reclamou de preço','Solicitou reserva'];
 function selectSit(key,manual){
