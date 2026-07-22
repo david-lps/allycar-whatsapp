@@ -870,6 +870,16 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .t-sem{background:#2a3138;color:#96a3ab}
   button{background:#2a3942;color:#e9edef;border:none;border-radius:6px;padding:5px 10px;cursor:pointer}
   pre{white-space:pre-wrap;background:#111b21;padding:10px;border-radius:8px;margin:8px 0 0;font-size:13px;line-height:1.4}
+  .conv{background:#111b21;padding:10px;border-radius:8px;margin:8px 0 0;font-size:13px;line-height:1.5}
+  .conv>div{white-space:pre-wrap;word-break:break-word}
+  .c-def{color:#c8d0d6}
+  .c-cli{color:#7ec8ff}
+  .c-cli b{color:#b9e2ff}
+  .c-age{color:#86e0b0}
+  .c-age b{color:#b6f0d0}
+  .c-con{color:#ffd479}
+  .c-con b{color:#ffe6ad}
+  .c-mot{color:#8696a0;margin-top:8px}
 </style></head><body>
 <header><span>📊 Allycar — Leads do Agente</span><span><a id="statsLink" href="#" style="color:#8fd0ff;text-decoration:none;font-weight:600;margin-right:14px">📈 Estatísticas</a><button onclick="load()">Atualizar</button></span></header>
 <div class="wrap"><div id="info" style="color:#8696a0;margin-bottom:8px"></div>
@@ -881,6 +891,21 @@ const filtro=new URLSearchParams(location.search).get('filtro')||'';
 function qs(f){const p=new URLSearchParams();if(token)p.set('token',token);if(f)p.set('filtro',f);const s=p.toString();return s?('?'+s):'';}
 document.getElementById('statsLink').href='/agent/stats'+qs('');
 function tag(s){const m={'Solicitou reserva':'t-res','Reclamou de preço':'t-rec','Não teve continuidade':'t-nc','Solicitou consultor':'t-con','Fora de Orlando':'t-fora','Em conversa':'t-em','Sem interação':'t-sem'};return `<span class="tag ${m[s]||'t-em'}">${s}</span>`;}
+function fmtConversa(txt){
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  let cur='c-def';  // fala atual (linhas de continuação herdam a cor)
+  return txt.split('\\n').map(line=>{
+    if(line.startsWith('Cliente:')) cur='c-cli';
+    else if(line.startsWith('Agente: [Consultor]')) cur='c-con';
+    else if(line.startsWith('Agente:')) cur='c-age';
+    else if(line.startsWith('[Motivo')) return `<div class="c-mot">${esc(line)}</div>`;
+    const idx=line.indexOf(':');
+    let html=esc(line);
+    if(idx>0 && (line.startsWith('Cliente:')||line.startsWith('Agente:')))
+      html='<b>'+esc(line.slice(0,idx+1))+'</b>'+esc(line.slice(idx+1));
+    return `<div class="${cur}">${html||'&nbsp;'}</div>`;
+  }).join('');
+}
 async function load(){
   const r=await fetch('/agent/leads/data'+qs(filtro));
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
@@ -919,8 +944,9 @@ async function load(){
       painel=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
                 <span style="font-size:12px">Janela: ${jan}</span>${btnModo}</div>${caixa}<div id="s${i}" style="font-size:12px;margin-top:6px"></div>`;
     }
+    const conv=(l.transcricao||'(sem mensagens)')+(l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):'');
     tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}
-      <pre>${(l.transcricao||'(sem mensagens)').replace(/</g,'&lt;')}${l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):''}</pre></div></td>`;
+      <div class="conv">${fmtConversa(conv)}</div></div></td>`;
     tb.appendChild(tr2);
   });
 }
