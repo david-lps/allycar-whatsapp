@@ -207,6 +207,29 @@ def _classificar(st):
     return "Em conversa"
 
 
+# Filtros do painel: cada card leva a um conjunto de folhas (None = todos)
+_RAMO_PRECO = {"Não teve continuidade", "Reclamou de preço", "Solicitou reserva"}
+FILTROS = {
+    "todos": None,
+    "sem_interacao": {"Sem interação"},
+    "conversa_iniciada": {"Em conversa", "Fora de Orlando", "Solicitou consultor"} | _RAMO_PRECO,
+    "em_conversa": {"Em conversa"},
+    "fora": {"Fora de Orlando"},
+    "consultor": {"Solicitou consultor"},
+    "viram_preco": set(_RAMO_PRECO),
+    "nao_continuidade": {"Não teve continuidade"},
+    "reclamou": {"Reclamou de preço"},
+    "reserva": {"Solicitou reserva"},
+}
+FILTRO_LABEL = {
+    "todos": "Todas as conversas", "sem_interacao": "Sem interação",
+    "conversa_iniciada": "Conversa iniciada", "em_conversa": "Em conversa",
+    "fora": "Fora de Orlando", "consultor": "Solicitou consultor",
+    "viram_preco": "Viram preço", "nao_continuidade": "Não teve continuidade",
+    "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
+}
+
+
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
 def _variantes_telefone(from_number):
     num = (from_number or "").replace("whatsapp:", "")
@@ -537,15 +560,14 @@ def agent_ui():
 def agent_leads_data():
     if not _dash_ok():
         return {"error": "não autorizado"}, 401
+    filtro = (request.args.get("filtro") or "").strip()
+    leafs = FILTROS.get(filtro)  # None = todos
     itens = []
     for row in agent_store.listar():
         st = row.get("state") or {}
-        if st.get("reservou") or st.get("intencao"):
-            situacao = "Solicitou reserva"
-        elif st.get("escalar"):
-            situacao = "Consultor"
-        else:
-            situacao = "Em conversa"
+        situacao = _classificar(st)  # mesma classificação-folha do funil
+        if leafs is not None and situacao not in leafs:
+            continue
         itens.append({
             "key": row.get("key"),
             "nome": st.get("name", "Cliente"),
@@ -557,7 +579,12 @@ def agent_leads_data():
             "atualizado": row.get("updated_at"),
             "transcricao": _transcricao(st),
         })
-    return {"total": len(itens), "leads": itens}, 200
+    return {
+        "total": len(itens),
+        "filtro": filtro,
+        "filtro_label": FILTRO_LABEL.get(filtro, ""),
+        "leads": itens,
+    }, 200
 
 
 @app.route("/agent/leads/delete", methods=["POST"])
@@ -642,6 +669,8 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .layer{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:6px 0}
   .block{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:14px 16px;flex:1;min-width:150px;max-width:250px;text-align:center}
   .block.big{max-width:340px;background:#0e2233}
+  a.block{text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s, background .15s}
+  a.block:hover{border-color:#3f88c5;background:#152634}
   .bn{color:#cbd5db;font-size:13px;font-weight:600}
   .bv{font-size:30px;font-weight:700;margin:4px 0}
   .bp{color:#8696a0;font-size:12px;line-height:1.3}
@@ -651,8 +680,8 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <header><span>📈 Allycar — Estatísticas do Agente</span>
   <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
 <div class="wrap">
-  <div class="layer"><div class="block big" style="border-top:3px solid #2f6fed">
-    <div class="bn">Total de Leads</div><div class="bv" id="total">–</div><div class="bp">100%</div></div></div>
+  <div class="layer"><a id="totalCard" class="block big" href="#" style="border-top:3px solid #2f6fed">
+    <div class="bn">Total de Leads</div><div class="bv" id="total">–</div><div class="bp">100%</div></a></div>
   <div class="conn">▼</div>
   <div class="layer" id="c2"></div>
   <div class="lvl">▼ dos que iniciaram conversa (<b id="n3">–</b>)</div>
@@ -668,17 +697,22 @@ const CORES={'Sem interação':'#5b6b78','Conversa iniciada':'#3f88c5','Em conve
   'Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Viram preço':'#0f9488',
   'Não teve continuidade':'#5b6b78','Reclamou de preço':'#b0742a','Solicitou reserva':'#12a150'};
 let d={total:0};
+const FILT={'Total de Leads':'todos','Sem interação':'sem_interacao','Conversa iniciada':'conversa_iniciada',
+  'Em conversa':'em_conversa','Fora de Orlando':'fora','Solicitou consultor':'consultor','Viram preço':'viram_preco',
+  'Não teve continuidade':'nao_continuidade','Reclamou de preço':'reclamou','Solicitou reserva':'reserva'};
+function lurl(nome){const p=new URLSearchParams();if(token)p.set('token',token);p.set('filtro',FILT[nome]||'todos');return '/agent/leads?'+p.toString();}
 function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
 function blk(o,prev,prevLbl){
   const cor=CORES[o.nome]||'#4b7ea3';
   const p1=pct(o.valor,prev)+' '+prevLbl;
   const p2=(prev===d.total)?'':(' · '+pct(o.valor,d.total)+' do total');
-  return `<div class="block" style="border-top:3px solid ${cor}"><div class="bn">${o.nome}</div><div class="bv">${o.valor}</div><div class="bp">${p1}${p2}</div></div>`;
+  return `<a class="block" href="${lurl(o.nome)}" style="border-top:3px solid ${cor}"><div class="bn">${o.nome}</div><div class="bv">${o.valor}</div><div class="bp">${p1}${p2}</div></a>`;
 }
 async function load(){
   const r=await fetch('/agent/stats/data'+q);
   if(!r.ok){document.body.innerHTML='<p style="padding:20px">Não autorizado — adicione ?token= na URL.</p>';return;}
   d=await r.json();
+  document.getElementById('totalCard').href=lurl('Total de Leads');
   document.getElementById('total').textContent=d.total;
   document.getElementById('n3').textContent=d.conversa_iniciada;
   document.getElementById('n4').textContent=d.viram_preco;
@@ -701,10 +735,13 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   th,td{text-align:left;padding:10px;border-bottom:1px solid #22303a;font-size:14px;vertical-align:top}
   th{color:#8696a0;font-weight:600}
   .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:inline-block}
-  .Reservou{background:#0b6b3a;color:#d7ffe8}
-  .QuerAlugar{background:#123a5a;color:#cfe8ff}
-  .Consultor{background:#7a4a12;color:#ffe8c7}
-  .Em{background:#334; color:#cdd}
+  .t-res{background:#0b6b3a;color:#d7ffe8}
+  .t-rec{background:#7a4a12;color:#ffe8c7}
+  .t-nc{background:#2b3640;color:#cdd6db}
+  .t-con{background:#6b4a12;color:#ffe8c7}
+  .t-fora{background:#432a63;color:#e5d3ff}
+  .t-em{background:#284152;color:#cfe4f5}
+  .t-sem{background:#2a3138;color:#96a3ab}
   button{background:#2a3942;color:#e9edef;border:none;border-radius:6px;padding:5px 10px;cursor:pointer}
   pre{white-space:pre-wrap;background:#111b21;padding:10px;border-radius:8px;margin:8px 0 0;font-size:13px;line-height:1.4}
 </style></head><body>
@@ -714,13 +751,19 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <tbody id="rows"></tbody></table></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
-document.getElementById('statsLink').href='/agent/stats'+(token?('?token='+encodeURIComponent(token)):'');
-function tag(s){const map={'Solicitou reserva':'Reservou','Quer alugar':'QuerAlugar','Consultor':'Consultor','Em conversa':'Em'};return `<span class="tag ${map[s]||'Em'}">${s}</span>`;}
+const filtro=new URLSearchParams(location.search).get('filtro')||'';
+function qs(f){const p=new URLSearchParams();if(token)p.set('token',token);if(f)p.set('filtro',f);const s=p.toString();return s?('?'+s):'';}
+document.getElementById('statsLink').href='/agent/stats'+qs('');
+function tag(s){const m={'Solicitou reserva':'t-res','Reclamou de preço':'t-rec','Não teve continuidade':'t-nc','Solicitou consultor':'t-con','Fora de Orlando':'t-fora','Em conversa':'t-em','Sem interação':'t-sem'};return `<span class="tag ${m[s]||'t-em'}">${s}</span>`;}
 async function load(){
-  const r=await fetch('/agent/leads/data'+(token?('?token='+encodeURIComponent(token)):''));
+  const r=await fetch('/agent/leads/data'+qs(filtro));
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
   const j=await r.json();
-  document.getElementById('info').textContent=j.total+' conversa(s)';
+  if(j.filtro && j.filtro_label){
+    document.getElementById('info').innerHTML='Filtrando: <b>'+j.filtro_label+'</b> · '+j.total+' conversa(s) &nbsp; <a href="/agent/leads'+qs('')+'" style="color:#8fd0ff">✕ limpar filtro</a>';
+  }else{
+    document.getElementById('info').textContent=j.total+' conversa(s)';
+  }
   const tb=document.getElementById('rows');tb.innerHTML='';
   j.leads.forEach((l,i)=>{
     const tr=document.createElement('tr');
