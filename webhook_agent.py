@@ -175,13 +175,12 @@ def _texto_agente(st):
 
 
 def _classificar(st):
-    """Classificação ÚNICA e exclusiva da conversa (cada conversa em 1 bucket)."""
-    # "Quer alugar" (intenção) conta junto com "Solicitou reserva"
+    """Folha ÚNICA da conversa (base da árvore/funil). Os ramos de preço
+    (Solicitou reserva / Reclamou de preço / Não teve continuidade) somam 'Viram preço'."""
     reservou = bool(st.get("reservou")) or bool(st.get("intencao"))
     escalar = bool(st.get("escalar"))
     tc = _texto_cliente(st)
     ta = _texto_agente(st)
-    # Fora de Orlando: flag precisa (agente) + heurística para conversas antigas
     fora = bool(st.get("fora_area")) or any(k in ta for k in [
         "cobertura", "não atendemos", "nao atendemos", "no atendemos",
         "no podemos atender", "fora de orlando", "fuera de orlando",
@@ -191,24 +190,21 @@ def _classificar(st):
         "desconto", "descuento", "presupuesto", "orçamento", "orcamento",
         "muito alto", "muy caro", "no tengo tanto",
     ])
-    viu_precos = _tem_ferramenta(st, "consultar_disponibilidade_precos")
-    tem_interacao = bool(tc.strip())
+    viu = _tem_ferramenta(st, "consultar_disponibilidade_precos")
 
+    if not tc.strip():
+        return "Sem interação"
     if reservou:
-        cat = "Solicitou reserva"
-    elif fora:
-        cat = "Fora de Orlando"
-    elif escalar:
-        cat = "Solicitou consultor"
-    elif reclamou:
-        cat = "Reclamou de preço"
-    elif viu_precos:
-        cat = "Só viu preços"
-    elif tem_interacao:
-        cat = "Em conversa"
-    else:
-        cat = "Sem interação"
-    return {"categoria": cat}
+        return "Solicitou reserva"       # ramo: Viram preço
+    if reclamou:
+        return "Reclamou de preço"       # ramo: Viram preço
+    if viu:
+        return "Não teve continuidade"   # ramo: Viram preço
+    if fora:
+        return "Fora de Orlando"
+    if escalar:
+        return "Solicitou consultor"
+    return "Em conversa"
 
 
 # ------- normalização de telefone (mesma lógica da produção, isolada) -------
@@ -590,23 +586,41 @@ def agent_stats_data():
     from collections import Counter
     cats = Counter()
     total = 0
-    viu_precos_total = 0  # cumulativo: viram preço em ALGUM momento (mesmo que depois avançaram)
     for row in agent_store.listar(limit=5000):
         st = row.get("state") or {}
-        cats[_classificar(st)["categoria"]] += 1
+        cats[_classificar(st)] += 1
         total += 1
-        if _tem_ferramenta(st, "consultar_disponibilidade_precos"):
-            viu_precos_total += 1
-    ordem = ["Sem interação", "Em conversa", "Só viu preços", "Reclamou de preço",
-             "Fora de Orlando", "Solicitou consultor", "Solicitou reserva"]
-    categorias = [{"nome": n, "valor": cats.get(n, 0)} for n in ordem]
-    com_interacao = total - cats.get("Sem interação", 0)
+
+    sem = cats.get("Sem interação", 0)
+    reserva = cats.get("Solicitou reserva", 0)
+    reclamou = cats.get("Reclamou de preço", 0)
+    nao_cont = cats.get("Não teve continuidade", 0)
+    fora = cats.get("Fora de Orlando", 0)
+    consultor = cats.get("Solicitou consultor", 0)
+    em_conversa = cats.get("Em conversa", 0)
+
+    conversa_iniciada = total - sem
+    viram_preco = reserva + reclamou + nao_cont
+
     return {
         "total": total,
-        "com_interacao": com_interacao,
-        "viu_precos_total": viu_precos_total,
-        "reservou": cats.get("Solicitou reserva", 0),
-        "categorias": categorias,
+        "conversa_iniciada": conversa_iniciada,
+        "viram_preco": viram_preco,
+        "camada2": [
+            {"nome": "Sem interação", "valor": sem},
+            {"nome": "Conversa iniciada", "valor": conversa_iniciada},
+        ],
+        "camada3": [
+            {"nome": "Em conversa", "valor": em_conversa},
+            {"nome": "Fora de Orlando", "valor": fora},
+            {"nome": "Solicitou consultor", "valor": consultor},
+            {"nome": "Viram preço", "valor": viram_preco},
+        ],
+        "camada4": [
+            {"nome": "Não teve continuidade", "valor": nao_cont},
+            {"nome": "Reclamou de preço", "valor": reclamou},
+            {"nome": "Solicitou reserva", "valor": reserva},
+        ],
     }, 200
 
 
@@ -625,57 +639,52 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   header{background:#202c33;padding:14px 18px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
   header a{color:#8fd0ff;text-decoration:none;font-weight:600}
   .wrap{max-width:1100px;margin:0 auto;padding:18px}
-  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
-  .tile{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:14px}
-  .tile .n{font-size:28px;font-weight:700}
-  .tile .l{color:#8696a0;font-size:13px;margin-top:2px}
-  .tile .p{color:#5fd08a;font-size:12px;margin-top:4px}
-  h3{color:#cbd5db;margin:18px 0 10px}
-  .bar{display:flex;align-items:center;gap:10px;margin:8px 0}
-  .bar .lbl{width:180px;font-size:13px;color:#cdd6db;flex:none}
-  .bar .track{flex:1;background:#1a2730;border-radius:6px;overflow:hidden;height:22px}
-  .bar .fill{height:100%;border-radius:6px}
-  .bar .val{width:44px;text-align:right;font-size:13px;color:#e9edef;flex:none;font-weight:600}
-  .bar .pctcol{width:230px;text-align:right;font-size:12px;color:#8696a0;flex:none}
-  .funnel{display:flex;gap:10px;flex-wrap:wrap}
-  .step{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:12px 16px;flex:1;min-width:150px}
-  .step .n{font-size:24px;font-weight:700}
-  .step .l{color:#8696a0;font-size:12px}
-  .step .p{color:#8fd0ff;font-size:12px}
+  .layer{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:6px 0}
+  .block{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:14px 16px;flex:1;min-width:150px;max-width:250px;text-align:center}
+  .block.big{max-width:340px;background:#0e2233}
+  .bn{color:#cbd5db;font-size:13px;font-weight:600}
+  .bv{font-size:30px;font-weight:700;margin:4px 0}
+  .bp{color:#8696a0;font-size:12px;line-height:1.3}
+  .conn{text-align:center;color:#3a4c57;margin:2px 0;font-size:16px}
+  .lvl{text-align:center;color:#8fd0ff;font-size:12px;margin:14px 0 6px}
 </style></head><body>
 <header><span>📈 Allycar — Estatísticas do Agente</span>
   <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
 <div class="wrap">
-  <div class="tiles" id="tiles"></div>
-  <h3>Classificação das conversas</h3>
-  <p style="color:#8696a0;font-size:12px;margin:-4px 0 10px">Cada conversa aparece em UMA categoria (o desfecho final). Os totais dos cards acima (ex: "viram preços") são cumulativos — por isso podem ser maiores que a barra "Só viu preços".</p>
-  <div id="bars"></div>
+  <div class="layer"><div class="block big" style="border-top:3px solid #2f6fed">
+    <div class="bn">Total de Leads</div><div class="bv" id="total">–</div><div class="bp">100%</div></div></div>
+  <div class="conn">▼</div>
+  <div class="layer" id="c2"></div>
+  <div class="lvl">▼ dos que iniciaram conversa (<b id="n3">–</b>)</div>
+  <div class="layer" id="c3"></div>
+  <div class="lvl">▼ dos que viram preço (<b id="n4">–</b>)</div>
+  <div class="layer" id="c4"></div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q=token?('?token='+encodeURIComponent(token)):'';
 document.getElementById('leadsLink').href='/agent/leads'+q;
-const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Só viu preços':'#0f9488',
-  'Reclamou de preço':'#b0742a','Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Solicitou reserva':'#12a150'};
-let d={total:0,com_interacao:0};
+const CORES={'Sem interação':'#5b6b78','Conversa iniciada':'#3f88c5','Em conversa':'#4b7ea3',
+  'Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Viram preço':'#0f9488',
+  'Não teve continuidade':'#5b6b78','Reclamou de preço':'#b0742a','Solicitou reserva':'#12a150'};
+let d={total:0};
 function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
-function P(a){return pct(a,d.total);}          // % sobre o total
-function I(a){return pct(a,d.com_interacao);}   // % sobre quem interagiu
-function both(a){return P(a)+' do total · '+I(a)+' c/ interação';}
-function tile(n,l,p){return `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div>${p?('<div class="p">'+p+'</div>'):''}</div>`;}
+function blk(o,prev,prevLbl){
+  const cor=CORES[o.nome]||'#4b7ea3';
+  const p1=pct(o.valor,prev)+' '+prevLbl;
+  const p2=(prev===d.total)?'':(' · '+pct(o.valor,d.total)+' do total');
+  return `<div class="block" style="border-top:3px solid ${cor}"><div class="bn">${o.nome}</div><div class="bv">${o.valor}</div><div class="bp">${p1}${p2}</div></div>`;
+}
 async function load(){
   const r=await fetch('/agent/stats/data'+q);
   if(!r.ok){document.body.innerHTML='<p style="padding:20px">Não autorizado — adicione ?token= na URL.</p>';return;}
   d=await r.json();
-  document.getElementById('tiles').innerHTML=
-    tile(d.total,'Conversas no total','')+
-    tile(d.com_interacao,'Com interação do lead',P(d.com_interacao)+' do total')+
-    tile(d.viu_precos_total,'Viram preços (em algum momento)',both(d.viu_precos_total))+
-    tile(d.reservou,'Solicitou reserva',both(d.reservou));
-  const max=Math.max(1,...d.categorias.map(c=>c.valor));
-  document.getElementById('bars').innerHTML=d.categorias.map(c=>
-    `<div class="bar"><div class="lbl">${c.nome}</div><div class="track"><div class="fill" style="width:${Math.round(c.valor*100/max)}%;background:${CORES[c.nome]||'#4b7ea3'}"></div></div><div class="val">${c.valor}</div><div class="pctcol">${c.nome==='Sem interação'?(P(c.valor)+' do total'):both(c.valor)}</div></div>`
-  ).join('');
+  document.getElementById('total').textContent=d.total;
+  document.getElementById('n3').textContent=d.conversa_iniciada;
+  document.getElementById('n4').textContent=d.viram_preco;
+  document.getElementById('c2').innerHTML=d.camada2.map(o=>blk(o,d.total,'do total')).join('');
+  document.getElementById('c3').innerHTML=d.camada3.map(o=>blk(o,d.conversa_iniciada,'de quem iniciou')).join('');
+  document.getElementById('c4').innerHTML=d.camada4.map(o=>blk(o,d.viram_preco,'de quem viu preço')).join('');
 }
 load();
 </script></body></html>"""
