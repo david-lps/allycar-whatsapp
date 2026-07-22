@@ -203,7 +203,7 @@ def _classificar(st):
     elif reclamou:
         cat = "Reclamou de preço"
     elif viu_precos:
-        cat = "Viu opções/preços"
+        cat = "Só viu preços"
     elif tem_interacao:
         cat = "Em conversa"
     else:
@@ -590,17 +590,21 @@ def agent_stats_data():
     from collections import Counter
     cats = Counter()
     total = 0
+    viu_precos_total = 0  # cumulativo: viram preço em ALGUM momento (mesmo que depois avançaram)
     for row in agent_store.listar(limit=5000):
         st = row.get("state") or {}
         cats[_classificar(st)["categoria"]] += 1
         total += 1
-    ordem = ["Sem interação", "Em conversa", "Viu opções/preços", "Reclamou de preço",
+        if _tem_ferramenta(st, "consultar_disponibilidade_precos"):
+            viu_precos_total += 1
+    ordem = ["Sem interação", "Em conversa", "Só viu preços", "Reclamou de preço",
              "Fora de Orlando", "Solicitou consultor", "Solicitou reserva"]
     categorias = [{"nome": n, "valor": cats.get(n, 0)} for n in ordem]
     com_interacao = total - cats.get("Sem interação", 0)
     return {
         "total": total,
         "com_interacao": com_interacao,
+        "viu_precos_total": viu_precos_total,
         "reservou": cats.get("Solicitou reserva", 0),
         "categorias": categorias,
     }, 200
@@ -644,13 +648,14 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <div class="wrap">
   <div class="tiles" id="tiles"></div>
   <h3>Classificação das conversas</h3>
+  <p style="color:#8696a0;font-size:12px;margin:-4px 0 10px">Cada conversa aparece em UMA categoria (o desfecho final). Os totais dos cards acima (ex: "viram preços") são cumulativos — por isso podem ser maiores que a barra "Só viu preços".</p>
   <div id="bars"></div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q=token?('?token='+encodeURIComponent(token)):'';
 document.getElementById('leadsLink').href='/agent/leads'+q;
-const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Viu opções/preços':'#0f9488',
+const CORES={'Sem interação':'#5b6b78','Em conversa':'#4b7ea3','Só viu preços':'#0f9488',
   'Reclamou de preço':'#b0742a','Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Solicitou reserva':'#12a150'};
 let d={total:0,com_interacao:0};
 function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
@@ -665,6 +670,7 @@ async function load(){
   document.getElementById('tiles').innerHTML=
     tile(d.total,'Conversas no total','')+
     tile(d.com_interacao,'Com interação do lead',P(d.com_interacao)+' do total')+
+    tile(d.viu_precos_total,'Viram preços (em algum momento)',both(d.viu_precos_total))+
     tile(d.reservou,'Solicitou reserva',both(d.reservou));
   const max=Math.max(1,...d.categorias.map(c=>c.valor));
   document.getElementById('bars').innerHTML=d.categorias.map(c=>
