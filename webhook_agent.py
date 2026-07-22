@@ -177,6 +177,9 @@ def _texto_agente(st):
 def _classificar(st):
     """Folha ÚNICA da conversa (base da árvore/funil). Os ramos de preço
     (Solicitou reserva / Reclamou de preço / Não teve continuidade) somam 'Viram preço'."""
+    manual = st.get("situacao_manual")
+    if manual:  # ajuste manual sobrepõe a classificação automática
+        return manual
     reservou = bool(st.get("reservou")) or bool(st.get("intencao"))
     escalar = bool(st.get("escalar"))
     tc = _texto_cliente(st)
@@ -227,6 +230,11 @@ FILTRO_LABEL = {
     "fora": "Fora de Orlando", "consultor": "Solicitou consultor",
     "viram_preco": "Viram preço", "nao_continuidade": "Não teve continuidade",
     "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
+}
+# Categorias válidas para ajuste manual da situação
+SITUACOES_VALIDAS = {
+    "Sem interação", "Em conversa", "Fora de Orlando", "Solicitou consultor",
+    "Não teve continuidade", "Reclamou de preço", "Solicitou reserva",
 }
 
 
@@ -574,6 +582,7 @@ def agent_leads_data():
             "telefone": st.get("phone", ""),
             "idioma": st.get("language", ""),
             "situacao": situacao,
+            "situacao_manual": st.get("situacao_manual") or "",
             "resumo": _resumo_lead(st),
             "motivo": st.get("motivo_escalonamento", ""),
             "atualizado": row.get("updated_at"),
@@ -585,6 +594,29 @@ def agent_leads_data():
         "filtro_label": FILTRO_LABEL.get(filtro, ""),
         "leads": itens,
     }, 200
+
+
+@app.route("/agent/leads/situacao", methods=["POST"])
+def agent_leads_situacao():
+    """Ajuste manual da situação (sobrepõe a classificação automática)."""
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    data = request.get_json(force=True, silent=True) or {}
+    key = (data.get("key") or "").strip()
+    sit = (data.get("situacao") or "").strip()
+    if not key:
+        return {"error": "key obrigatório"}, 400
+    if sit and sit not in SITUACOES_VALIDAS:
+        return {"error": "situação inválida"}, 400
+    conversa = agent_store.carregar(key)
+    if conversa is None:
+        return {"error": "conversa não encontrada"}, 404
+    if sit:
+        conversa["situacao_manual"] = sit
+    else:
+        conversa.pop("situacao_manual", None)  # limpar → volta ao automático
+    agent_store.salvar(key, conversa)
+    return {"status": "ok", "key": key, "situacao": sit or "(automático)"}, 200
 
 
 @app.route("/agent/leads/delete", methods=["POST"])
@@ -768,7 +800,8 @@ async function load(){
   j.leads.forEach((l,i)=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
-      <td style="white-space:nowrap">${tag(l.situacao)}</td><td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
+      <td style="white-space:nowrap">${tag(l.situacao)}${l.situacao_manual?' <span title="ajustado manualmente" style="color:#8fd0ff">✎</span>':''}<br>${selectSit(l.key,l.situacao_manual)}</td>
+      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}</td>
       <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
@@ -777,9 +810,20 @@ async function load(){
     tb.appendChild(tr2);
   });
 }
+const SITS=['Sem interação','Em conversa','Fora de Orlando','Solicitou consultor','Não teve continuidade','Reclamou de preço','Solicitou reserva'];
+function selectSit(key,manual){
+  const opts=['<option value="">↻ automático</option>'].concat(
+    SITS.map(s=>`<option value="${s}"${s===manual?' selected':''}>${s}</option>`));
+  return `<select onchange='reclass(${JSON.stringify(key||"")},this.value)' style="margin-top:5px;font-size:11px;background:#2a3942;color:#e9edef;border:1px solid #33434d;border-radius:5px;padding:2px">${opts.join('')}</select>`;
+}
+async function reclass(key,sit){
+  if(!key)return;
+  await fetch('/agent/leads/situacao'+qs(''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,situacao:sit})});
+  load();
+}
 async function del(key){
   if(!key||!confirm('Excluir a conversa de '+key+' ?'))return;
-  await fetch('/agent/leads/delete'+(token?('?token='+encodeURIComponent(token)):''),
+  await fetch('/agent/leads/delete'+qs(''),
     {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
   load();
 }
