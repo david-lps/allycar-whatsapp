@@ -210,15 +210,27 @@ def _classificar(st):
     return "Em conversa"
 
 
+def _tem_resposta_cliente(st):
+    """True se o cliente já enviou ao menos uma mensagem (role 'user')."""
+    return any(m.get("role") == "user" for m in st.get("history", []))
+
+
 def _janela_info(st):
     """Janela de 24h do WhatsApp a partir da última mensagem do cliente.
 
-    Conversas anteriores ao registro de 'ultima_msg_cliente' não têm esse dado.
-    Nesse caso a janela fica 'desconhecida': não sabemos se ainda está aberta,
-    então mostramos a caixa de envio e deixamos o próprio WhatsApp validar no
-    momento do envio (se estiver fora das 24h, a Twilio recusa e avisamos)."""
+    Estados possíveis:
+      - aberta       : cliente respondeu há menos de 24h (recado livre liberado).
+      - fechada      : cliente respondeu, mas já passou das 24h.
+      - sem_resposta : cliente NUNCA respondeu (só recebeu o disparo). A janela
+                       nunca abriu — só dá para reabrir com um template.
+      - desconhecida : respondeu antes de existir o registro de horário; não
+                       sabemos se ainda está aberta, então deixamos tentar e o
+                       WhatsApp valida no envio."""
     ts = st.get("ultima_msg_cliente")
     if not ts:
+        if not _tem_resposta_cliente(st):
+            return {"estado": "sem_resposta", "aberta": False, "restante_min": 0,
+                    "label": "cliente ainda não respondeu — só via template"}
         return {"estado": "desconhecida", "aberta": False, "restante_min": 0,
                 "label": "janela desconhecida (conversa anterior ao registro)"}
     try:
@@ -685,6 +697,8 @@ def agent_leads_enviar():
     if conversa is None:
         return {"error": "conversa não encontrada"}, 404
     jan = _janela_info(conversa)
+    if jan["estado"] == "sem_resposta":
+        return {"error": "Cliente ainda não respondeu — a janela de 24h nunca abriu. Só é possível reabrir com um template (ex.: o disparo de retargeting)."}, 400
     if jan["estado"] == "fechada":
         return {"error": "Janela de 24h fechada — o WhatsApp não permite mensagem livre agora. O cliente precisa escrever primeiro (ou use um template)."}, 400
     try:
@@ -934,6 +948,8 @@ async function load(){
       ?`<span style="color:#7ee0a8">🟢 ${l.janela_label}</span>`
       : est==='desconhecida'
       ?`<span style="color:#ffd479">🟡 ${l.janela_label}</span>`
+      : est==='sem_resposta'
+      ?`<span style="color:#9fb0bb">⚪ ${l.janela_label}</span>`
       :`<span style="color:#e0a0a0">🔴 ${l.janela_label}</span>`;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
@@ -952,12 +968,17 @@ async function load(){
       const notaDesc = est==='desconhecida'
         ?`<div style="color:#ffd479;font-size:11px;margin-bottom:4px">Sem registro da última resposta do cliente (conversa anterior a esta função). Pode tentar enviar — se estiver fora das 24h, o WhatsApp recusa e avisamos aqui.</div>`
         :'';
-      const caixa = est!=='fechada'
-        ?`${notaDesc}<div style="display:flex;gap:8px;margin-top:4px">
+      let caixa;
+      if(est==='sem_resposta'){
+        caixa=`<div style="margin-top:8px;color:#9fb0bb;font-size:12px">O cliente ainda não respondeu ao disparo — a janela de 24h nunca abriu. Não dá para mandar recado livre; só é possível reengajar com um <b>template</b> (ex.: o disparo de retargeting).</div>`;
+      }else if(est==='fechada'){
+        caixa=`<div style="margin-top:8px;color:#e0a0a0;font-size:12px">Janela de 24h fechada — o WhatsApp só permite mensagem livre depois que o cliente escrever de novo (ou via template).</div>`;
+      }else{
+        caixa=`${notaDesc}<div style="display:flex;gap:8px;margin-top:4px">
              <input id="m${i}" placeholder="Escreva um recado ao cliente…" style="flex:1;padding:9px;border-radius:8px;border:none;background:#2a3942;color:#e9edef">
              <button style="background:#00a884;color:#fff" onclick='enviar(${JSON.stringify(key)},${i})'>Enviar</button>
-           </div>`
-        :`<div style="margin-top:8px;color:#e0a0a0;font-size:12px">Janela de 24h fechada — o WhatsApp só permite mensagem livre depois que o cliente escrever de novo (ou via template).</div>`;
+           </div>`;
+      }
       painel=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
                 <span style="font-size:12px">Janela: ${jan}</span>${btnModo}</div>${caixa}<div id="s${i}" style="font-size:12px;margin-top:6px"></div>`;
     }
