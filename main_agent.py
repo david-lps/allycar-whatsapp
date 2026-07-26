@@ -126,6 +126,17 @@ TUDO JÁ INCLUSO NO PACOTE (deixe MUITO claro — é o nosso maior diferencial v
 Os 3 diferenciais matadores para destacar cedo: você escolhe o MODELO EXATO ·
 SEM CAUÇÃO · ENTREGA no hotel SEM FILA (Orlando + 30 milhas).
 
+SERVIÇO DE TRANSFER (transporte com motorista) — a Allycar TAMBÉM oferece:
+- Sim, trabalhamos com transfer (transporte com motorista) — é um serviço à parte da locação de carros.
+- Frota de transfer: vans de 10 ou 13 lugares.
+- Valores: USD 250 por hora OU USD 1.500 por dia. Para um trajeto específico, dependendo da
+  DISTÂNCIA, calculamos uma TAXA FIXA — e esse cálculo é feito por um consultor.
+- Informe esses valores com naturalidade quando perguntarem. NUNCA invente a taxa fixa por
+  distância (só o consultor calcula) e NÃO colete pagamento no chat.
+- Se o cliente QUISER SEGUIR com o transfer, use acionar_consultor_transfer: um consultor humano
+  assume para fechar e a equipe recebe o email com a conversa. Avise o cliente, com acolhimento,
+  que um consultor vai continuar o atendimento por aqui.
+
 REQUISITO DE IDADE: o condutor principal precisa ter no mínimo 25 anos para alugar.
 Se o cliente indicar que tem menos de 25, informe com gentileza que a idade mínima é 25
 anos e ofereça o consultor para ver alternativas.
@@ -285,6 +296,25 @@ TOOLS = [
                 "modelo": {"type": "string"},
                 "data_retirada": {"type": "string"},
                 "data_devolucao": {"type": "string"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acionar_consultor_transfer",
+        "description": (
+            "Use quando o cliente quiser SEGUIR com o serviço de TRANSFER (transporte com "
+            "motorista — vans de 10/13 lugares). Aciona um consultor humano para fechar o "
+            "transfer e faz a equipe receber o email com a conversa. Passe os detalhes que já "
+            "souber (nº de pessoas, datas, trajeto/horas). NÃO feche a taxa fixa por distância "
+            "(só o consultor calcula) nem colete pagamento no chat."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pessoas": {"type": "integer", "description": "Nº de passageiros, se informado"},
+                "detalhes": {"type": "string", "description": "Trajeto, datas, horas ou distância que o cliente informou"},
             },
             "required": [],
             "additionalProperties": False,
@@ -475,6 +505,15 @@ def _executar_ferramenta(nome, entrada, conversa):
         return {"status": "consultor_acionado",
                 "instrucao": ("Um consultor humano vai finalizar a reserva e o pagamento com o cliente. "
                               "Avise o cliente de forma calorosa que o consultor já vai assumir; NÃO envie link nem peça cartão.")}, {"reservou": True, "escalar": True}
+    if nome == "acionar_consultor_transfer":
+        conversa["escalar"] = True
+        conversa["transfer"] = True
+        detalhes = " ".join(f"{k}={v}" for k, v in (entrada or {}).items() if v)
+        conversa["motivo_escalonamento"] = f"Cliente quer contratar TRANSFER (transporte com motorista). {detalhes}".strip()
+        return {"status": "consultor_acionado",
+                "instrucao": ("Um consultor humano vai assumir para fechar o transfer com o cliente. "
+                              "Avise o cliente, de forma calorosa, que o consultor já vai continuar por aqui; "
+                              "NÃO feche valores nem colete pagamento.")}, {"escalar": True}
     if nome == "marcar_fora_de_area":
         conversa["fora_area"] = True
         return {"status": "ok", "mensagem": "Registrado internamente. Siga a regra de COBERTURA: recuse com educação e ofereça opções dentro de Orlando + 30 milhas."}, {"fora_area": True}
