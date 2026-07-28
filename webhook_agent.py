@@ -527,6 +527,8 @@ def webhook_agent():
 @app.route("/r/<code>", methods=["GET"])
 def redirect_rastreavel(code):
     """Link rastreável: registra o clique (IP, device, hora) e encaminha ao site."""
+    # O código é sempre 8 hex — remove qualquer caractere colado (ex.: markdown/pontuação)
+    code = re.sub(r'[^0-9a-f]', '', (code or '').lower())[:8]
     try:
         key, conversa = agent_store.buscar_por_ref(code)
         if conversa is not None:
@@ -1162,7 +1164,7 @@ _CHAT_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 const chat=document.getElementById('chat'), inp=document.getElementById('inp');
 const session='teste-web-'+Math.floor(Date.now()/86400000);
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function linkify(t){return esc(t).replace(/(https?:\\/\\/[^\\s]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#8fd0ff">$1</a>');}
+function linkify(t){return esc(t).replace(/(https?:\\/\\/[^\\s]+?)([*.,;:!?)\\]]*)(?=\\s|$)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#8fd0ff">$1</a>$2');}
 function add(t,cls){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=linkify(t);chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d;}
 async function send(e){e.preventDefault();const m=inp.value.trim();if(!m)return false;add(m,'user');inp.value='';
   const w=add('…','meta');
