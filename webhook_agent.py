@@ -77,6 +77,30 @@ TRACK_BASE_URL = os.getenv("TRACK_BASE_URL", "https://allycar-agent-production.u
 SITE_URL = os.getenv("SITE_URL", "https://allycar.com").rstrip("/")
 _ALLYCAR_LINK_RE = re.compile(r'(?:https?://)?(?:www\.)?allycar\.com(?:/[^\s]*)?', re.IGNORECASE)
 
+# Rastreio do link no TEMPLATE do disparo inicial. Fica DESLIGADO até o template
+# na Twilio ter a variável {{2}} (o código) aprovada e o go.allycar.com no ar.
+# Quando ligado, o disparo manda o código como variável {{2}} (o template deve
+# conter "https://go.allycar.com/r/{{2}}"). Ative com TRACK_TEMPLATE_LINK=1.
+TRACK_TEMPLATE_LINK = (os.getenv("TRACK_TEMPLATE_LINK", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _nova_conversa_inicial(name, phone, language):
+    """Estado inicial da conversa, já com um código de rastreio embutido."""
+    return {
+        "name": name,
+        "phone": (phone or "").replace("whatsapp:", ""),
+        "language": language,
+        "history": [],
+        "ref_code": secrets.token_hex(4),
+    }
+
+
+def _vars_template(name, code):
+    """Variáveis do template: {{1}}=nome sempre; {{2}}=código do link só se ativado."""
+    if TRACK_TEMPLATE_LINK and code:
+        return json.dumps({"1": name, "2": code})
+    return json.dumps({"1": name})
+
 
 def _garantir_ref(conversa):
     """Garante um código de rastreio único por conversa (persistido no estado)."""
@@ -523,21 +547,19 @@ def enviar_inicial():
         return {"error": f"template do agente não configurado para o idioma '{language}'"}, 400
 
     to = formatar_telefone(phone)  # whatsapp:+...
+    conversa = _nova_conversa_inicial(name, phone, language)
     try:
         msg = twilio_client.messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=to,
             content_sid=sid,
-            content_variables=json.dumps({"1": name}),
+            content_variables=_vars_template(name, conversa["ref_code"]),
         )
     except Exception as e:
         return {"error": str(e)}, 500
 
-    agent_store.salvar(to, {
-        "name": name, "phone": phone.replace("whatsapp:", ""),
-        "language": language, "history": [],
-    })
-    return {"status": "enviado", "sid": msg.sid, "to": to}, 200
+    agent_store.salvar(to, conversa)
+    return {"status": "enviado", "sid": msg.sid, "to": to, "ref": conversa["ref_code"]}, 200
 
 
 def _disparar_leads_agente():
@@ -610,15 +632,13 @@ def _disparar_leads_agente():
             erros += 1
             continue
 
+        conversa = _nova_conversa_inicial(nome, telefone_fmt, language)
         try:
             twilio_client.messages.create(
                 from_=TWILIO_WHATSAPP_NUMBER, to=telefone_fmt,
-                content_sid=sid, content_variables=json.dumps({"1": nome}),
+                content_sid=sid, content_variables=_vars_template(nome, conversa["ref_code"]),
             )
-            agent_store.salvar(telefone_fmt, {
-                "name": nome, "phone": telefone_fmt.replace("whatsapp:", ""),
-                "language": language, "history": [],
-            })
+            agent_store.salvar(telefone_fmt, conversa)
             sheet.update_cell(idx, col_status, "Sent")
             enviados += 1
             print(f"✅ [agente] enviado para {nome} ({telefone_fmt}) [{language}]")
