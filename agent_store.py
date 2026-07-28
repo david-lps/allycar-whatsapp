@@ -116,6 +116,31 @@ def carregar(key):
         conn.close()
 
 
+def buscar_por_ref(code):
+    """Encontra a conversa cujo ref_code == code. Retorna (key, conversa) ou (None, None)."""
+    if not code:
+        return None, None
+    if not ATIVO:
+        for k, v in _mem.items():
+            if v.get("ref_code") == code:
+                return k, v
+        return None, None
+    conn = _conn()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT key, state FROM agent_conversas WHERE state->>'ref_code' = %s LIMIT 1",
+                (code,),
+            )
+            row = cur.fetchone()
+            return (row[0], row[1]) if row else (None, None)
+    except Exception as e:
+        print(f"⚠️ agent_store: falha ao buscar ref {code}: {e}")
+        return None, None
+    finally:
+        conn.close()
+
+
 def deletar(key):
     if not ATIVO:
         _mem.pop(key, None)

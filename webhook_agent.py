@@ -13,12 +13,14 @@ Fluxo assíncrono (o agente com Opus pode passar do timeout de ~15s do Twilio):
 """
 
 import os
+import re
 import json
 import time
+import secrets
 import threading
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, request
+from flask import Flask, request, redirect
 from dotenv import load_dotenv
 import requests
 from twilio.rest import Client
@@ -67,6 +69,30 @@ PAISES_USA = {"usa", "united states", "estados unidos", "eua"}
 
 # Token opcional de proteção do dashboard (recomendado configurar no Railway)
 DASHBOARD_TOKEN = os.getenv("AGENT_DASHBOARD_TOKEN")
+
+# Link rastreável (jornada WhatsApp → site). O agente manda um link que passa pelo
+# nosso redirect /r/<code> (registra o clique + IP) e encaminha ao site com ?ref=<code>.
+# TRACK_BASE_URL: base pública do serviço (troque por go.allycar.com se criar o CNAME).
+TRACK_BASE_URL = os.getenv("TRACK_BASE_URL", "https://allycar-agent-production.up.railway.app").rstrip("/")
+SITE_URL = os.getenv("SITE_URL", "https://allycar.com").rstrip("/")
+_ALLYCAR_LINK_RE = re.compile(r'(?:https?://)?(?:www\.)?allycar\.com(?:/[^\s]*)?', re.IGNORECASE)
+
+
+def _garantir_ref(conversa):
+    """Garante um código de rastreio único por conversa (persistido no estado)."""
+    code = conversa.get("ref_code")
+    if not code:
+        code = secrets.token_hex(4)  # 8 caracteres hex, curto e URL-safe
+        conversa["ref_code"] = code
+    return code
+
+
+def _injetar_link_rastreavel(texto, conversa):
+    """Troca menções a allycar.com pelo link rastreável (redirect que captura o clique)."""
+    if not texto or "allycar.com" not in texto.lower():
+        return texto
+    code = _garantir_ref(conversa)
+    return _ALLYCAR_LINK_RE.sub(f"{TRACK_BASE_URL}/r/{code}", texto)
 
 
 def _dash_ok():
@@ -213,6 +239,19 @@ def _classificar(st):
 def _tem_resposta_cliente(st):
     """True se o cliente já enviou ao menos uma mensagem (role 'user')."""
     return any(m.get("role") == "user" for m in st.get("history", []))
+
+
+def _fmt_ts(iso, offset_horas=-3):
+    """Formata um ISO (UTC) para 'dd/mm HH:MM' no fuso do Brasil (UTC-3)."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=offset_horas))).strftime("%d/%m %H:%M")
+    except Exception:
+        return ""
 
 
 def _janela_info(st):
@@ -393,9 +432,13 @@ def _processar(from_number, body):
         resultado = main_agent.responder_agente(conversa, body)
         texto = resultado["texto"]
 
+        # Link rastreável: troca allycar.com pelo redirect /r/<code> (registra clique + IP).
+        # Só afeta o texto ENVIADO — o histórico do agente mantém "allycar.com".
+        texto_envio = _injetar_link_rastreavel(texto, conversa)
+
         # Envia a resposta do agente ao cliente (janela de 24h — cliente acabou de escrever)
         twilio_client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER, to=from_number, body=texto
+            from_=TWILIO_WHATSAPP_NUMBER, to=from_number, body=texto_envio
         )
         print(f"🤖 Agente respondeu {from_number}: {texto[:80]}")
 
@@ -435,6 +478,31 @@ def webhook_agent():
 
     # Ack imediato (a resposta real vai pela API REST, na thread de fundo)
     return ("", 204)
+
+
+@app.route("/r/<code>", methods=["GET"])
+def redirect_rastreavel(code):
+    """Link rastreável: registra o clique (IP, device, hora) e encaminha ao site."""
+    try:
+        key, conversa = agent_store.buscar_por_ref(code)
+        if conversa is not None:
+            ip = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                  or request.remote_addr or "")
+            clique = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "ip": ip,
+                "ua": request.headers.get("User-Agent", "")[:300],
+            }
+            conversa.setdefault("site_cliques", []).append(clique)
+            conversa["site_clicou"] = True
+            conversa["site_ultimo_clique"] = clique["ts"]
+            conversa["site_ip"] = ip
+            agent_store.salvar(key, conversa)
+            print(f"🔗 Clique rastreado: {key} ip={ip}")
+    except Exception as e:
+        print(f"⚠️ Falha ao registrar clique {code}: {e}")
+    # Encaminha ao site levando o ref adiante (pra correlação futura com a HQ)
+    return redirect(f"{SITE_URL}/?ref={code}", code=302)
 
 
 @app.route("/agent/enviar-inicial", methods=["GET", "POST"])
@@ -649,6 +717,10 @@ def agent_leads_data():
             "janela_label": jan["label"],
             "humano": bool(st.get("humano")),
             "pode_enviar": bool((row.get("key") or "").startswith("whatsapp:")),
+            "site_clicou": bool(st.get("site_clicou")),
+            "site_ultimo_clique": _fmt_ts(st.get("site_ultimo_clique")),
+            "site_ip": st.get("site_ip") or "",
+            "site_cliques": len(st.get("site_cliques") or []),
         })
     return {
         "total": len(itens),
@@ -951,10 +1023,13 @@ async function load(){
       : est==='sem_resposta'
       ?`<span style="color:#9fb0bb">⚪ ${l.janela_label}</span>`
       :`<span style="color:#e0a0a0">🔴 ${l.janela_label}</span>`;
+    const siteBadge = l.site_clicou
+      ? `<span title="clicou no link do site${l.site_ip?(' · IP '+l.site_ip):''}" style="color:#8fd0ff">🔗 site ${l.site_ultimo_clique||''}${l.site_cliques>1?(' ('+l.site_cliques+'×)'):''}</span>`
+      : `<span style="color:#5b6b75">🔗 sem clique</span>`;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
       <td style="white-space:nowrap">${tag(l.situacao)}${l.situacao_manual?' <span title="ajustado manualmente" style="color:#8fd0ff">✎</span>':''}<br>${selectSit(l.key,l.situacao_manual)}</td>
-      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span></td>
+      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span><br><span style="font-size:11px">${siteBadge}</span></td>
       <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
@@ -982,8 +1057,14 @@ async function load(){
       painel=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
                 <span style="font-size:12px">Janela: ${jan}</span>${btnModo}</div>${caixa}<div id="s${i}" style="font-size:12px;margin-top:6px"></div>`;
     }
+    const jornada = l.site_clicou
+      ? `<div style="background:#0e1a20;border:1px solid #22303a;border-radius:8px;padding:8px 10px;margin:8px 0 0;font-size:12px">
+           <b style="color:#8fd0ff">🔗 Jornada no site</b> · clicou ${l.site_cliques}× · último clique: ${l.site_ultimo_clique||'—'}${l.site_ip?(' · IP '+l.site_ip):''}
+           <div style="color:#8696a0;margin-top:3px">Próximo passo: cruzar este IP com as tentativas de reserva da HQ para ver o step alcançado / se fechou.</div>
+         </div>`
+      : `<div style="color:#5b6b75;font-size:12px;margin:8px 0 0">🔗 Sem clique registrado no link do site.</div>`;
     const conv=(l.transcricao||'(sem mensagens)')+(l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):'');
-    tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}
+    tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}${jornada}
       <div class="conv">${fmtConversa(conv)}</div></div></td>`;
     tb.appendChild(tr2);
   });
