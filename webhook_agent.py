@@ -697,9 +697,11 @@ def agent_chat():
         return {"error": "message vazio"}, 400
     conversa = agent_store.carregar(session) or {"name": "Cliente", "phone": session, "history": []}
     resultado = main_agent.responder_agente(conversa, message)
+    # Mesma troca de link do WhatsApp real, para o teste ser fiel (link rastreável)
+    reply = _injetar_link_rastreavel(resultado["texto"], conversa)
     agent_store.salvar(session, conversa)
     return {
-        "reply": resultado["texto"],
+        "reply": reply,
         "reservou": resultado["reservou"],
         "escalar": resultado["escalar"],
     }, 200
@@ -1159,7 +1161,9 @@ _CHAT_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <script>
 const chat=document.getElementById('chat'), inp=document.getElementById('inp');
 const session='teste-web-'+Math.floor(Date.now()/86400000);
-function add(t,cls){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d;}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function linkify(t){return esc(t).replace(/(https?:\\/\\/[^\\s]+)/g,'<a href="$1" target="_blank" rel="noopener" style="color:#8fd0ff">$1</a>');}
+function add(t,cls){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=linkify(t);chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d;}
 async function send(e){e.preventDefault();const m=inp.value.trim();if(!m)return false;add(m,'user');inp.value='';
   const w=add('…','meta');
   try{const r=await fetch('/agent/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session,message:m})});
