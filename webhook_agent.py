@@ -102,6 +102,26 @@ def _vars_template(name, code):
     return json.dumps({"1": name})
 
 
+def _enviar_template(to, sid, name, code):
+    """Envia o template de entrada. Se o rastreio estiver ligado mas o template
+    ainda não tiver a variável {{2}} (ex.: aprovação pendente), o envio com {{2}}
+    falha — então tentamos de novo SÓ com o nome. Assim o disparo nunca quebra por
+    causa da ordem (flag ligada antes do template novo)."""
+    try:
+        return twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER, to=to, content_sid=sid,
+            content_variables=_vars_template(name, code),
+        )
+    except Exception as e:
+        if TRACK_TEMPLATE_LINK and code:
+            print(f"⚠️ template com {{2}} falhou ({e}); reenviando só com o nome.")
+            return twilio_client.messages.create(
+                from_=TWILIO_WHATSAPP_NUMBER, to=to, content_sid=sid,
+                content_variables=json.dumps({"1": name}),
+            )
+        raise
+
+
 def _garantir_ref(conversa):
     """Garante um código de rastreio único por conversa (persistido no estado)."""
     code = conversa.get("ref_code")
@@ -549,12 +569,7 @@ def enviar_inicial():
     to = formatar_telefone(phone)  # whatsapp:+...
     conversa = _nova_conversa_inicial(name, phone, language)
     try:
-        msg = twilio_client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            to=to,
-            content_sid=sid,
-            content_variables=_vars_template(name, conversa["ref_code"]),
-        )
+        msg = _enviar_template(to, sid, name, conversa["ref_code"])
     except Exception as e:
         return {"error": str(e)}, 500
 
@@ -634,10 +649,7 @@ def _disparar_leads_agente():
 
         conversa = _nova_conversa_inicial(nome, telefone_fmt, language)
         try:
-            twilio_client.messages.create(
-                from_=TWILIO_WHATSAPP_NUMBER, to=telefone_fmt,
-                content_sid=sid, content_variables=_vars_template(nome, conversa["ref_code"]),
-            )
+            _enviar_template(telefone_fmt, sid, nome, conversa["ref_code"])
             agent_store.salvar(telefone_fmt, conversa)
             sheet.update_cell(idx, col_status, "Sent")
             enviados += 1
