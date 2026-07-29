@@ -35,6 +35,7 @@ from main import (
 )
 import main_agent
 import agent_store
+import hq_attempts
 
 load_dotenv()
 
@@ -294,6 +295,15 @@ def _fmt_ts(iso, offset_horas=-3):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone(timedelta(hours=offset_horas))).strftime("%d/%m %H:%M")
+    except Exception:
+        return ""
+
+
+def _fmt_data(iso):
+    """Formata só a DATA ('dd/mm') a partir de um ISO, sem conversão de fuso."""
+    try:
+        y, m, d = iso[:10].split("-")
+        return f"{d}/{m}"
     except Exception:
         return ""
 
@@ -737,6 +747,16 @@ def agent_leads_data():
         if leafs is not None and situacao not in leafs:
             continue
         jan = _janela_info(st)
+        # Fase 2: cruza o IP do clique com as tentativas de reserva da HQ
+        hq = None
+        if st.get("site_clicou"):
+            ips = [c.get("ip") for c in (st.get("site_cliques") or [])]
+            if st.get("site_ip"):
+                ips.append(st.get("site_ip"))
+            try:
+                hq = hq_attempts.match_por_ips(ips)
+            except Exception as e:
+                print(f"⚠️ match HQ falhou: {e}")
         itens.append({
             "key": row.get("key"),
             "nome": st.get("name", "Cliente"),
@@ -757,6 +777,14 @@ def agent_leads_data():
             "site_ultimo_clique": _fmt_ts(st.get("site_ultimo_clique")),
             "site_ip": st.get("site_ip") or "",
             "site_cliques": len(st.get("site_cliques") or []),
+            "hq_match": bool(hq),
+            "hq_step": (hq["step"] if hq else 0),
+            "hq_step_label": (hq["step_label"] if hq else ""),
+            "hq_veiculo": (hq["veiculo"] if hq else ""),
+            "hq_datas": (f"{_fmt_data(hq['pick_up_date'])} → {_fmt_data(hq['return_date'])}"
+                         if hq and hq.get("pick_up_date") else ""),
+            "hq_quando": (_fmt_ts(hq["created_at"]) if hq else ""),
+            "hq_cidade": (hq["cidade"] if hq else ""),
         })
     return {
         "total": len(itens),
@@ -1062,10 +1090,13 @@ async function load(){
     const siteBadge = l.site_clicou
       ? `<span title="clicou no link do site${l.site_ip?(' · IP '+l.site_ip):''}" style="color:#8fd0ff">🔗 site ${l.site_ultimo_clique||''}${l.site_cliques>1?(' ('+l.site_cliques+'×)'):''}</span>`
       : `<span style="color:#5b6b75">🔗 sem clique</span>`;
+    const hqBadge = l.hq_match
+      ? `<br><span title="tentativa de reserva na HQ (via IP)" style="color:#7ee0a8">🏁 ${l.hq_step_label} (step ${l.hq_step})</span>`
+      : '';
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
       <td style="white-space:nowrap">${tag(l.situacao)}${l.situacao_manual?' <span title="ajustado manualmente" style="color:#8fd0ff">✎</span>':''}<br>${selectSit(l.key,l.situacao_manual)}</td>
-      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span><br><span style="font-size:11px">${siteBadge}</span></td>
+      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span><br><span style="font-size:11px">${siteBadge}${hqBadge}</span></td>
       <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
@@ -1093,10 +1124,13 @@ async function load(){
       painel=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
                 <span style="font-size:12px">Janela: ${jan}</span>${btnModo}</div>${caixa}<div id="s${i}" style="font-size:12px;margin-top:6px"></div>`;
     }
+    const hqLinha = l.hq_match
+      ? `<div style="color:#7ee0a8;margin-top:4px">🏁 Na HQ (por IP): <b>${l.hq_step_label}</b> (step ${l.hq_step})${l.hq_veiculo?(' · '+l.hq_veiculo):''}${l.hq_datas?(' · '+l.hq_datas):''}${l.hq_cidade?(' · '+l.hq_cidade):''}${l.hq_quando?(' · '+l.hq_quando):''}</div>`
+      : `<div style="color:#8696a0;margin-top:4px">Sem tentativa de reserva correspondente na HQ (por enquanto).</div>`;
     const jornada = l.site_clicou
       ? `<div style="background:#0e1a20;border:1px solid #22303a;border-radius:8px;padding:8px 10px;margin:8px 0 0;font-size:12px">
            <b style="color:#8fd0ff">🔗 Jornada no site</b> · clicou ${l.site_cliques}× · último clique: ${l.site_ultimo_clique||'—'}${l.site_ip?(' · IP '+l.site_ip):''}
-           <div style="color:#8696a0;margin-top:3px">Próximo passo: cruzar este IP com as tentativas de reserva da HQ para ver o step alcançado / se fechou.</div>
+           ${hqLinha}
          </div>`
       : `<div style="color:#5b6b75;font-size:12px;margin:8px 0 0">🔗 Sem clique registrado no link do site.</div>`;
     const conv=(l.transcricao||'(sem mensagens)')+(l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):'');
