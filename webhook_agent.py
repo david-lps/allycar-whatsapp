@@ -1126,7 +1126,7 @@ async function load(){
     }
     const hqLinha = l.hq_match
       ? `<div style="color:#7ee0a8;margin-top:4px">🏁 Na HQ (por IP): <b>${l.hq_step_label}</b> (step ${l.hq_step})${l.hq_veiculo?(' · '+l.hq_veiculo):''}${l.hq_datas?(' · '+l.hq_datas):''}${l.hq_cidade?(' · '+l.hq_cidade):''}${l.hq_quando?(' · '+l.hq_quando):''}</div>`
-      : `<div style="color:#8696a0;margin-top:4px">Sem tentativa de reserva correspondente na HQ (por enquanto).</div>`;
+      : `<div style="color:#8696a0;margin-top:4px">Clicou no site, mas ainda não iniciou uma reserva no booking da HQ (ou iniciou de outro IP).</div>`;
     const jornada = l.site_clicou
       ? `<div style="background:#0e1a20;border:1px solid #22303a;border-radius:8px;padding:8px 10px;margin:8px 0 0;font-size:12px">
            <b style="color:#8fd0ff">🔗 Jornada no site</b> · clicou ${l.site_cliques}× · último clique: ${l.site_ultimo_clique||'—'}${l.site_ip?(' · IP '+l.site_ip):''}
