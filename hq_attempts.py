@@ -89,6 +89,24 @@ def _attempts():
     return _cache["attempts"] or [], _cache["idx"] or {}
 
 
+def funil_global():
+    """Funil de conversão de TODOS os visitantes do site (reservation-attempts).
+    Retorna contagens CUMULATIVAS por passo (quem chegou >= step N)."""
+    lista, _ = _attempts()
+    def reached(n):
+        return sum(1 for a in lista if (a.get("last_step") or 0) >= n)
+    datas = sorted(a.get("created_at", "") for a in lista if a.get("created_at"))
+    return {
+        "step2": reached(2),
+        "step3": reached(3),
+        "step4": reached(4),
+        "step5": reached(5),
+        "periodo_ini": datas[0] if datas else "",
+        "periodo_fim": datas[-1] if datas else "",
+        "total_amostra": len(lista),
+    }
+
+
 def match_por_ips(ips):
     """Dado um conjunto de IPs (do clique), retorna o 'melhor' attempt
     (passo mais avançado; desempate pelo mais recente) ou None."""

@@ -31,6 +31,7 @@ from main import (
     esta_no_horario_comercial,
     descobrir_pais_por_telefone,
     cliente_ja_tem_reserva,
+    buscar_reservas_ativas_com_cache,   # reservas de fato (open + rental)
     enviar_mensagem_inicial_com_opcoes,  # EUA: reaproveita o email+SMS da produção
 )
 import main_agent
@@ -308,6 +309,26 @@ def _fmt_data(iso):
         return ""
 
 
+def _tel_digits(s):
+    """Só os dígitos de um telefone (para casar leads com reservas)."""
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+
+def _reservas_ativas_info():
+    """(total, set de telefones em dígitos) das reservas ativas (open+rental)."""
+    try:
+        reservas = buscar_reservas_ativas_com_cache() or []
+    except Exception as e:
+        print(f"⚠️ stats: falha ao buscar reservas ativas: {e}")
+        return 0, set()
+    fones = set()
+    for r in reservas:
+        tel = _tel_digits((r.get("customer") or {}).get("phone_number"))
+        if len(tel) >= 8:  # evita casar por trechos curtos demais
+            fones.add(tel)
+    return len(reservas), fones
+
+
 def _janela_info(st):
     """Janela de 24h do WhatsApp a partir da última mensagem do cliente.
 
@@ -362,6 +383,7 @@ FILTRO_LABEL = {
     "fora": "Fora de Orlando", "consultor": "Solicitou consultor",
     "viram_preco": "Viram preço", "nao_continuidade": "Não teve continuidade",
     "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
+    "clicou": "Clicaram no site",
 }
 # Categorias válidas para ajuste manual da situação
 SITUACOES_VALIDAS = {
@@ -740,11 +762,14 @@ def agent_leads_data():
         return {"error": "não autorizado"}, 401
     filtro = (request.args.get("filtro") or "").strip()
     leafs = FILTROS.get(filtro)  # None = todos
+    so_clicou = (filtro == "clicou")  # filtro especial: clicou no link do site
     itens = []
     for row in agent_store.listar():
         st = row.get("state") or {}
+        if so_clicou and not st.get("site_clicou"):
+            continue
         situacao = _classificar(st)  # mesma classificação-folha do funil
-        if leafs is not None and situacao not in leafs:
+        if not so_clicou and leafs is not None and situacao not in leafs:
             continue
         jan = _janela_info(st)
         # Fase 2: cruza o IP do clique com as tentativas de reserva da HQ
@@ -898,43 +923,71 @@ def agent_stats_data():
     if not _dash_ok():
         return {"error": "não autorizado"}, 401
     from collections import Counter
+
+    # Reservas de fato (open+rental): total + telefones para casar com leads
+    total_reservas, fones_reserva = _reservas_ativas_info()
+
     cats = Counter()
-    total = 0
+    total = clicaram = reservaram = 0
+    step_ge = {2: 0, 3: 0, 4: 0, 5: 0}  # leads (que clicaram) que alcançaram >= step N na HQ
+
     for row in agent_store.listar(limit=5000):
         st = row.get("state") or {}
-        cats[_classificar(st)] += 1
         total += 1
+        cats[_classificar(st)] += 1
+
+        tel = _tel_digits(st.get("phone"))
+        if len(tel) >= 8 and any(tel in f or f in tel for f in fones_reserva):
+            reservaram += 1
+
+        if st.get("site_clicou"):
+            clicaram += 1
+            ips = [c.get("ip") for c in (st.get("site_cliques") or [])]
+            if st.get("site_ip"):
+                ips.append(st.get("site_ip"))
+            try:
+                hq = hq_attempts.match_por_ips(ips)
+            except Exception:
+                hq = None
+            if hq:
+                for n in (2, 3, 4, 5):
+                    if hq["step"] >= n:
+                        step_ge[n] += 1
 
     sem = cats.get("Sem interação", 0)
-    reserva = cats.get("Solicitou reserva", 0)
+    reserva_chat = cats.get("Solicitou reserva", 0)
     reclamou = cats.get("Reclamou de preço", 0)
     nao_cont = cats.get("Não teve continuidade", 0)
-    fora = cats.get("Fora de Orlando", 0)
-    consultor = cats.get("Solicitou consultor", 0)
-    em_conversa = cats.get("Em conversa", 0)
-
     conversa_iniciada = total - sem
-    viram_preco = reserva + reclamou + nao_cont
+    viram_preco = reserva_chat + reclamou + nao_cont
+
+    leads_funil = [
+        {"nome": "Leads", "valor": total, "filtro": "todos"},
+        {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada"},
+        {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco"},
+        {"nome": "Clicaram no site", "valor": clicaram, "filtro": "clicou"},
+        {"nome": "Iniciaram reserva", "valor": step_ge[2]},
+        {"nome": "Escolheram veículo", "valor": step_ge[3]},
+        {"nome": "Preencheram dados", "valor": step_ge[4]},
+        {"nome": "Foram ao pagamento", "valor": step_ge[5]},
+    ]
+
+    g = hq_attempts.funil_global()
+    site_funil = [
+        {"nome": "Iniciaram reserva", "valor": g["step2"]},
+        {"nome": "Escolheram veículo", "valor": g["step3"]},
+        {"nome": "Preencheram dados", "valor": g["step4"]},
+        {"nome": "Foram ao pagamento", "valor": g["step5"]},
+    ]
 
     return {
-        "total": total,
-        "conversa_iniciada": conversa_iniciada,
-        "viram_preco": viram_preco,
-        "camada2": [
-            {"nome": "Sem interação", "valor": sem},
-            {"nome": "Conversa iniciada", "valor": conversa_iniciada},
-        ],
-        "camada3": [
-            {"nome": "Em conversa", "valor": em_conversa},
-            {"nome": "Fora de Orlando", "valor": fora},
-            {"nome": "Solicitou consultor", "valor": consultor},
-            {"nome": "Viram preço", "valor": viram_preco},
-        ],
-        "camada4": [
-            {"nome": "Não teve continuidade", "valor": nao_cont},
-            {"nome": "Reclamou de preço", "valor": reclamou},
-            {"nome": "Solicitou reserva", "valor": reserva},
-        ],
+        "leads_funil": leads_funil,
+        "leads_reservou": reservaram,
+        "site_funil": site_funil,
+        "site_reservas": total_reservas,
+        "site_periodo": (f"{_fmt_data(g['periodo_ini'])} – {_fmt_data(g['periodo_fim'])}"
+                         if g.get("periodo_ini") else ""),
+        "site_amostra": g.get("total_amostra", 0),
     }, 200
 
 
@@ -947,65 +1000,112 @@ def agent_stats_ui():
 
 _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Allycar — Estatísticas do Agente</title>
+<title>Allycar — Funil de Conversão</title>
 <style>
-  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b141a;color:#e9edef;margin:0}
+  :root{--bg:#0b141a;--panel:#111b21;--line:#22303a;--ink:#e9edef;--mut:#8696a0;--mut2:#7c8b96}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0}
   header{background:#202c33;padding:14px 18px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
   header a{color:#8fd0ff;text-decoration:none;font-weight:600}
-  .wrap{max-width:1100px;margin:0 auto;padding:18px}
-  .layer{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:6px 0}
-  .block{background:#111b21;border:1px solid #22303a;border-radius:12px;padding:14px 16px;flex:1;min-width:150px;max-width:250px;text-align:center}
-  .block.big{max-width:340px;background:#0e2233}
-  a.block{text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s, background .15s}
-  a.block:hover{border-color:#3f88c5;background:#152634}
-  .bn{color:#cbd5db;font-size:13px;font-weight:600}
-  .bv{font-size:30px;font-weight:700;margin:4px 0}
-  .bp{color:#8696a0;font-size:12px;line-height:1.3}
-  .conn{text-align:center;color:#3a4c57;margin:2px 0;font-size:16px}
-  .lvl{text-align:center;color:#8fd0ff;font-size:12px;margin:14px 0 6px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px}
+  .cols{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:1 1 380px;min-width:300px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  .col h2{font-size:16px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .col .sub{color:var(--mut);font-size:12px;margin-bottom:14px;line-height:1.4}
+  .hero{display:flex;align-items:baseline;gap:9px;margin:2px 0 16px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+  .hero .big{font-size:38px;font-weight:800;line-height:1}
+  .hero.leads .big{color:#33c98a}.hero.site .big{color:#5aa6e6}
+  .hero .cap{color:var(--mut);font-size:12px;max-width:210px;line-height:1.3}
+  .stage{display:block;text-decoration:none;color:inherit;margin-bottom:13px;border-radius:10px}
+  a.stage{cursor:pointer}
+  a.stage:hover .track{outline:2px solid #3f88c5;outline-offset:1px}
+  a.stage:hover .st-name{color:#bfe0ff}
+  .st-head{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;margin-bottom:5px}
+  .st-name{color:#cbd5db;font-weight:600}
+  .st-val{font-weight:800;font-size:16px}
+  .st-val em{color:var(--mut);font-weight:600;font-size:12px;font-style:normal}
+  .track{background:#0a1116;border:1px solid var(--line);border-radius:8px;height:24px;overflow:hidden}
+  .fill{height:100%;border-radius:7px;min-width:6px;transition:width .55s cubic-bezier(.2,.7,.2,1)}
+  .fill.leads{background:linear-gradient(90deg,#17864f,#28cd82)}
+  .fill.site{background:linear-gradient(90deg,#2a6299,#4ea1e6)}
+  .st-sub{color:var(--mut2);font-size:11px;margin-top:4px}
+  .goal{margin-top:4px;border:1px solid rgba(240,192,74,.42);background:rgba(240,192,74,.09);border-radius:13px;padding:15px 16px;text-align:center}
+  .goal-label{color:#f0c04a;font-weight:800;font-size:14px;letter-spacing:.2px}
+  .goal-val{font-size:36px;font-weight:800;margin:3px 0}
+  .goal-sub{color:#b7c2ca;font-size:12px;line-height:1.35}
+  .note{color:#5f6e78;font-size:11px;margin-top:12px;line-height:1.45}
+  .legend{color:var(--mut);font-size:11px;text-align:center;margin-top:16px;line-height:1.5}
 </style></head><body>
-<header><span>📈 Allycar — Estatísticas do Agente</span>
+<header><span>📈 Allycar — Funil de Conversão</span>
   <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
-<div class="wrap">
-  <div class="layer"><a id="totalCard" class="block big" href="#" style="border-top:3px solid #2f6fed">
-    <div class="bn">Total de Leads</div><div class="bv" id="total">–</div><div class="bp">100%</div></a></div>
-  <div class="conn">▼</div>
-  <div class="layer" id="c2"></div>
-  <div class="lvl">▼ dos que iniciaram conversa (<b id="n3">–</b>)</div>
-  <div class="layer" id="c3"></div>
-  <div class="lvl">▼ dos que viram preço (<b id="n4">–</b>)</div>
-  <div class="layer" id="c4"></div>
+<div class="wrap"><div class="cols">
+  <section class="col">
+    <h2>🟢 Seus leads (WhatsApp)</h2>
+    <div class="sub">A jornada dos leads que você contatou — da conversa até a reserva de fato.</div>
+    <div class="hero leads"><span class="big" id="leadsConv">–</span><span class="cap">dos leads viraram <b>reserva de fato</b></span></div>
+    <div id="leadsFunil"></div>
+    <div id="leadsGoal"></div>
+    <div class="note">Passos do site vêm do cruzamento do clique (IP) com as tentativas de reserva da HQ. Nem todo lead que clicou iniciou uma reserva.</div>
+  </section>
+  <section class="col">
+    <h2>🔵 Site inteiro (HQ)</h2>
+    <div class="sub" id="siteSub">Conversão de <b>todos</b> os visitantes que iniciaram uma reserva no site.</div>
+    <div class="hero site"><span class="big" id="siteConv">–</span><span class="cap">de quem iniciou reserva no site fechou</span></div>
+    <div id="siteFunil"></div>
+    <div id="siteGoal"></div>
+    <div class="note" id="siteNote"></div>
+  </section>
+</div>
+<div class="legend">🎯 <b>Reserva de fato</b> = reservas ativas na HQ (open + rental). O funil do site conta as tentativas por passo; a reserva final é de todas as origens.</div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q=token?('?token='+encodeURIComponent(token)):'';
 document.getElementById('leadsLink').href='/agent/leads'+q;
-const CORES={'Sem interação':'#5b6b78','Conversa iniciada':'#3f88c5','Em conversa':'#4b7ea3',
-  'Fora de Orlando':'#8a4fd0','Solicitou consultor':'#c2740c','Viram preço':'#0f9488',
-  'Não teve continuidade':'#5b6b78','Reclamou de preço':'#b0742a','Solicitou reserva':'#12a150'};
-let d={total:0};
-const FILT={'Total de Leads':'todos','Sem interação':'sem_interacao','Conversa iniciada':'conversa_iniciada',
-  'Em conversa':'em_conversa','Fora de Orlando':'fora','Solicitou consultor':'consultor','Viram preço':'viram_preco',
-  'Não teve continuidade':'nao_continuidade','Reclamou de preço':'reclamou','Solicitou reserva':'reserva'};
-function lurl(nome){const p=new URLSearchParams();if(token)p.set('token',token);p.set('filtro',FILT[nome]||'todos');return '/agent/leads?'+p.toString();}
-function pct(a,b){return b>0?Math.round(a*100/b)+'%':'0%';}
-function blk(o,prev,prevLbl){
-  const cor=CORES[o.nome]||'#4b7ea3';
-  const p1=pct(o.valor,prev)+' '+prevLbl;
-  const p2=(prev===d.total)?'':(' · '+pct(o.valor,d.total)+' do total');
-  return `<a class="block" href="${lurl(o.nome)}" style="border-top:3px solid ${cor}"><div class="bn">${o.nome}</div><div class="bv">${o.valor}</div><div class="bp">${p1}${p2}</div></a>`;
+function pct(a,b){return b>0?Math.round(a*100/b):0;}
+function lurl(f){const p=new URLSearchParams();if(token)p.set('token',token);p.set('filtro',f||'todos');return '/agent/leads?'+p.toString();}
+function renderFunil(elId, stages, cls, linkable){
+  const topo=stages[0]?stages[0].valor:0;
+  document.getElementById(elId).innerHTML=stages.map((s,i)=>{
+    const w=topo>0?Math.max(3,Math.round(s.valor*100/topo)):0;
+    const pTop=pct(s.valor,topo);
+    const prev=i>0?stages[i-1].valor:s.valor;
+    const drop=i>0?pct(prev-s.valor,prev):0;
+    const sub=i===0?'100% · topo do funil':(pTop+'% do topo · −'+drop+'% vs. etapa anterior');
+    const inner='<div class="st-head"><span class="st-name">'+s.nome+'</span>'
+      +'<span class="st-val">'+s.valor+(i>0?(' <em>· '+pTop+'%</em>'):'')+'</span></div>'
+      +'<div class="track"><div class="fill '+cls+'" style="width:'+w+'%"></div></div>'
+      +'<div class="st-sub">'+sub+'</div>';
+    const t=s.nome+': '+s.valor+' ('+pTop+'% do topo)';
+    return (linkable&&s.filtro)
+      ?'<a class="stage" title="'+t+'" href="'+lurl(s.filtro)+'">'+inner+'</a>'
+      :'<div class="stage" title="'+t+'">'+inner+'</div>';
+  }).join('');
 }
+function goalCard(label,val,sub){
+  return '<div class="goal"><div class="goal-label">'+label+'</div>'
+    +'<div class="goal-val">'+val+'</div><div class="goal-sub">'+sub+'</div></div>';
+}
+let d={};
 async function load(){
   const r=await fetch('/agent/stats/data'+q);
   if(!r.ok){document.body.innerHTML='<p style="padding:20px">Não autorizado — adicione ?token= na URL.</p>';return;}
   d=await r.json();
-  document.getElementById('totalCard').href=lurl('Total de Leads');
-  document.getElementById('total').textContent=d.total;
-  document.getElementById('n3').textContent=d.conversa_iniciada;
-  document.getElementById('n4').textContent=d.viram_preco;
-  document.getElementById('c2').innerHTML=d.camada2.map(o=>blk(o,d.total,'do total')).join('');
-  document.getElementById('c3').innerHTML=d.camada3.map(o=>blk(o,d.conversa_iniciada,'de quem iniciou')).join('');
-  document.getElementById('c4').innerHTML=d.camada4.map(o=>blk(o,d.viram_preco,'de quem viu preço')).join('');
+  // ---- leads ----
+  const total=(d.leads_funil[0]||{}).valor||0;
+  const pay=(d.leads_funil[7]||{}).valor||0;
+  renderFunil('leadsFunil', d.leads_funil, 'leads', true);
+  document.getElementById('leadsConv').textContent=pct(d.leads_reservou,total)+'%';
+  document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Reservaram de fato', d.leads_reservou,
+    pct(d.leads_reservou,total)+'% dos leads'+(pay>0?(' · '+pct(d.leads_reservou,pay)+'% de quem foi ao pagamento'):''));
+  // ---- site ----
+  const step2=(d.site_funil[0]||{}).valor||0;
+  renderFunil('siteFunil', d.site_funil, 'site', false);
+  document.getElementById('siteConv').textContent=pct(d.site_reservas,step2)+'%';
+  document.getElementById('siteGoal').innerHTML=goalCard('🎯 Reservas ativas na HQ', d.site_reservas,
+    'todas as origens · '+pct(d.site_reservas,step2)+'% de quem iniciou reserva');
+  document.getElementById('siteNote').textContent=
+    'Amostra: '+(d.site_amostra||0)+' tentativas'+(d.site_periodo?(' ('+d.site_periodo+')'):'')+'.';
 }
 load();
 </script></body></html>"""
