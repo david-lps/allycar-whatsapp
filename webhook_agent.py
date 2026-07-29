@@ -958,6 +958,7 @@ def agent_stats_data():
     reserva_chat = cats.get("Solicitou reserva", 0)
     reclamou = cats.get("Reclamou de preço", 0)
     nao_cont = cats.get("Não teve continuidade", 0)
+    fora_orlando = cats.get("Fora de Orlando", 0)
     conversa_iniciada = total - sem
     viram_preco = reserva_chat + reclamou + nao_cont
 
@@ -983,6 +984,7 @@ def agent_stats_data():
     return {
         "leads_funil": leads_funil,
         "leads_reservou": reservaram,
+        "fora_orlando": fora_orlando,
         "site_funil": site_funil,
         "site_reservas": total_reservas,
         "site_periodo": (f"{_fmt_data(g['periodo_ini'])} – {_fmt_data(g['periodo_fim'])}"
@@ -1035,6 +1037,13 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .goal-sub{color:#b7c2ca;font-size:12px;line-height:1.35}
   .note{color:#5f6e78;font-size:11px;margin-top:12px;line-height:1.45}
   .legend{color:var(--mut);font-size:11px;text-align:center;margin-top:16px;line-height:1.5}
+  .chip{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin:0 0 14px;
+        border:1px solid rgba(138,79,208,.42);background:rgba(138,79,208,.10);border-radius:12px;padding:11px 14px;transition:background .15s,border-color .15s}
+  a.chip:hover{background:rgba(138,79,208,.18);border-color:rgba(138,79,208,.7)}
+  .chip-ic{font-size:18px}
+  .chip-txt{color:#e0d3f5;font-weight:700;font-size:13px}
+  .chip-val{margin-left:auto;font-size:20px;font-weight:800;color:#d9c2ff}
+  .chip-pct{color:var(--mut);font-size:11px}
 </style></head><body>
 <header><span>📈 Allycar — Funil de Conversão</span>
   <span><a id="leadsLink" href="#">← Leads</a>&nbsp;&nbsp;<a href="#" onclick="load();return false">Atualizar</a></span></header>
@@ -1045,6 +1054,8 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
     <div class="hero leads"><span class="big" id="leadsConv">–</span><span class="cap">dos leads viraram <b>reserva de fato</b></span></div>
     <div id="leadsFunil"></div>
     <div id="leadsGoal"></div>
+    <div style="height:14px"></div>
+    <div id="leadsInd"></div>
     <div class="note">Passos do site vêm do cruzamento do clique (IP) com as tentativas de reserva da HQ. Nem todo lead que clicou iniciou uma reserva.</div>
   </section>
   <section class="col">
@@ -1093,11 +1104,15 @@ async function load(){
   d=await r.json();
   // ---- leads ----
   const total=(d.leads_funil[0]||{}).valor||0;
-  const pay=(d.leads_funil[7]||{}).valor||0;
   renderFunil('leadsFunil', d.leads_funil, 'leads', true);
   document.getElementById('leadsConv').textContent=pct(d.leads_reservou,total)+'%';
   document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Reservaram de fato', d.leads_reservou,
-    pct(d.leads_reservou,total)+'% dos leads'+(pay>0?(' · '+pct(d.leads_reservou,pay)+'% de quem foi ao pagamento'):''));
+    pct(d.leads_reservou,total)+'% dos leads (casado por telefone com reservas ativas)');
+  document.getElementById('leadsInd').innerHTML=
+    '<a class="chip" title="Leads fora da área (Orlando + 30 milhas)" href="'+lurl('fora')+'">'
+    +'<span class="chip-ic">📍</span><span class="chip-txt">Fora de Orlando</span>'
+    +'<span class="chip-val">'+(d.fora_orlando||0)+'</span>'
+    +'<span class="chip-pct">'+pct(d.fora_orlando||0,total)+'% dos leads</span></a>';
   // ---- site ----
   const step2=(d.site_funil[0]||{}).valor||0;
   renderFunil('siteFunil', d.site_funil, 'site', false);
