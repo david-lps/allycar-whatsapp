@@ -967,18 +967,18 @@ def agent_stats_data():
         {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada"},
         {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco"},
         {"nome": "Clicaram no site", "valor": clicaram, "filtro": "clicou"},
-        {"nome": "Iniciaram reserva", "valor": step_ge[2]},
-        {"nome": "Escolheram veículo", "valor": step_ge[3]},
-        {"nome": "Preencheram dados", "valor": step_ge[4]},
-        {"nome": "Foram ao pagamento", "valor": step_ge[5]},
+        {"nome": "Step 2 · Veículos", "valor": step_ge[2]},
+        {"nome": "Step 3 · Configuração", "valor": step_ge[3]},
+        {"nome": "Step 4 · Cliente", "valor": step_ge[4]},
+        {"nome": "Step 5 · Confirmação", "valor": step_ge[5]},
     ]
 
     g = hq_attempts.funil_global()
     site_funil = [
-        {"nome": "Iniciaram reserva", "valor": g["step2"]},
-        {"nome": "Escolheram veículo", "valor": g["step3"]},
-        {"nome": "Preencheram dados", "valor": g["step4"]},
-        {"nome": "Foram ao pagamento", "valor": g["step5"]},
+        {"nome": "Step 2 · Veículos", "valor": g["step2"]},
+        {"nome": "Step 3 · Configuração", "valor": g["step3"]},
+        {"nome": "Step 4 · Cliente", "valor": g["step4"]},
+        {"nome": "Step 5 · Confirmação", "valor": g["step5"]},
     ]
 
     return {
@@ -1067,7 +1067,7 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
     <div class="note" id="siteNote"></div>
   </section>
 </div>
-<div class="legend">🎯 <b>Reserva de fato</b> = reservas ativas na HQ (open + rental). O funil do site conta as tentativas por passo; a reserva final é de todas as origens.</div>
+<div class="legend">Steps do widget de reserva: 2·Veículos · 3·Configuração · 4·Cliente · 5·Confirmação. O <b>Step 6 · Pagamento</b> é feito fora do widget (página de pagamento), então não aparece como "tentativa" — quem paga vira <b>reserva de fato</b> (reservas ativas na HQ, open + rental).</div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
@@ -1106,7 +1106,7 @@ async function load(){
   const total=(d.leads_funil[0]||{}).valor||0;
   renderFunil('leadsFunil', d.leads_funil, 'leads', true);
   document.getElementById('leadsConv').textContent=pct(d.leads_reservou,total)+'%';
-  document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Reservaram de fato', d.leads_reservou,
+  document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reserva de fato)', d.leads_reservou,
     pct(d.leads_reservou,total)+'% dos leads (casado por telefone com reservas ativas)');
   document.getElementById('leadsInd').innerHTML=
     '<a class="chip" title="Leads fora da área (Orlando + 30 milhas)" href="'+lurl('fora')+'">'
@@ -1117,8 +1117,8 @@ async function load(){
   const step2=(d.site_funil[0]||{}).valor||0;
   renderFunil('siteFunil', d.site_funil, 'site', false);
   document.getElementById('siteConv').textContent=pct(d.site_reservas,step2)+'%';
-  document.getElementById('siteGoal').innerHTML=goalCard('🎯 Reservas ativas na HQ', d.site_reservas,
-    'todas as origens · '+pct(d.site_reservas,step2)+'% de quem iniciou reserva');
+  document.getElementById('siteGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reservas ativas)', d.site_reservas,
+    'todas as origens · '+pct(d.site_reservas,step2)+'% de quem chegou aos Veículos');
   document.getElementById('siteNote').textContent=
     'Amostra: '+(d.site_amostra||0)+' tentativas'+(d.site_periodo?(' ('+d.site_periodo+')'):'')+'.';
 }

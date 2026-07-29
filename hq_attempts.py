@@ -26,13 +26,16 @@ _cache = {
     "classes": None, "classes_ts": 0.0,
 }
 
-# Rótulo de cada passo do funil (last_step da HQ)
+# Rótulo de cada passo do funil (last_step da HQ). O pagamento (step 6) é feito
+# FORA do widget (redirect p/ Stripe): a tentativa só registra até 5 (Confirmação);
+# quem paga vira reserva de fato e sai da lista de tentativas.
 STEP_LABEL = {
-    1: "buscou datas",
-    2: "viu a frota e os preços",
-    3: "escolheu o veículo",
-    4: "preencheu os dados",
-    5: "foi ao pagamento",
+    1: "Datas",
+    2: "Veículos",
+    3: "Configuração",
+    4: "Cliente",
+    5: "Confirmação",
+    6: "Pagamento",
 }
 
 
