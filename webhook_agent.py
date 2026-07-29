@@ -329,6 +329,27 @@ def _reservas_ativas_info():
     return len(reservas), fones
 
 
+def _reservas_ativas_lista():
+    """Lista de reservas ativas (open+rental); [] em caso de falha."""
+    try:
+        return buscar_reservas_ativas_com_cache() or []
+    except Exception as e:
+        print(f"⚠️ falha ao buscar reservas ativas: {e}")
+        return []
+
+
+def _match_reserva(phone, reservas):
+    """Retorna a reserva ativa cujo telefone casa com o do lead, ou None."""
+    tel = _tel_digits(phone)
+    if len(tel) < 8:
+        return None
+    for r in reservas:
+        rtel = _tel_digits((r.get("customer") or {}).get("phone_number"))
+        if len(rtel) >= 8 and (tel in rtel or rtel in tel):
+            return r
+    return None
+
+
 def _janela_info(st):
     """Janela de 24h do WhatsApp a partir da última mensagem do cliente.
 
@@ -383,7 +404,7 @@ FILTRO_LABEL = {
     "fora": "Fora de Orlando", "consultor": "Solicitou consultor",
     "viram_preco": "Viram preço", "nao_continuidade": "Não teve continuidade",
     "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
-    "clicou": "Clicaram no site",
+    "clicou": "Clicaram no site", "reservou": "Reservaram de fato",
 }
 # Categorias válidas para ajuste manual da situação
 SITUACOES_VALIDAS = {
@@ -762,14 +783,19 @@ def agent_leads_data():
         return {"error": "não autorizado"}, 401
     filtro = (request.args.get("filtro") or "").strip()
     leafs = FILTROS.get(filtro)  # None = todos
-    so_clicou = (filtro == "clicou")  # filtro especial: clicou no link do site
+    so_clicou = (filtro == "clicou")      # filtro especial: clicou no link do site
+    so_reservou = (filtro == "reservou")  # filtro especial: casou com reserva ativa
+    reservas = _reservas_ativas_lista()
     itens = []
     for row in agent_store.listar():
         st = row.get("state") or {}
         if so_clicou and not st.get("site_clicou"):
             continue
+        reserva = _match_reserva(st.get("phone"), reservas)
+        if so_reservou and not reserva:
+            continue
         situacao = _classificar(st)  # mesma classificação-folha do funil
-        if not so_clicou and leafs is not None and situacao not in leafs:
+        if not so_clicou and not so_reservou and leafs is not None and situacao not in leafs:
             continue
         jan = _janela_info(st)
         # Fase 2: cruza o IP do clique com as tentativas de reserva da HQ
@@ -810,6 +836,14 @@ def agent_leads_data():
                          if hq and hq.get("pick_up_date") else ""),
             "hq_quando": (_fmt_ts(hq["created_at"]) if hq else ""),
             "hq_cidade": (hq["cidade"] if hq else ""),
+            "reservou": bool(reserva),
+            "reserva_info": ({
+                "nome": (reserva.get("customer") or {}).get("label", ""),
+                "veiculo": (reserva.get("vehicle_class") or {}).get("name", ""),
+                "pickup": _fmt_data(reserva.get("pick_up_date", "")),
+                "status": reserva.get("status", ""),
+                "id": reserva.get("id", ""),
+            } if reserva else None),
         })
     return {
         "total": len(itens),
@@ -1035,6 +1069,8 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .goal-label{color:#f0c04a;font-weight:800;font-size:14px;letter-spacing:.2px}
   .goal-val{font-size:36px;font-weight:800;margin:3px 0}
   .goal-sub{color:#b7c2ca;font-size:12px;line-height:1.35}
+  a.goal-link{display:block;text-decoration:none;color:inherit;cursor:pointer;transition:background .15s,border-color .15s}
+  a.goal-link:hover{background:rgba(240,192,74,.17);border-color:rgba(240,192,74,.75)}
   .note{color:#5f6e78;font-size:11px;margin-top:12px;line-height:1.45}
   .legend{color:var(--mut);font-size:11px;text-align:center;margin-top:16px;line-height:1.5}
   .chip{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin:0 0 14px;
@@ -1093,9 +1129,11 @@ function renderFunil(elId, stages, cls, linkable){
       :'<div class="stage" title="'+t+'">'+inner+'</div>';
   }).join('');
 }
-function goalCard(label,val,sub){
-  return '<div class="goal"><div class="goal-label">'+label+'</div>'
-    +'<div class="goal-val">'+val+'</div><div class="goal-sub">'+sub+'</div></div>';
+function goalCard(label,val,sub,href){
+  const inner='<div class="goal-label">'+label+'</div>'
+    +'<div class="goal-val">'+val+'</div><div class="goal-sub">'+sub+'</div>';
+  return href?('<a class="goal goal-link" href="'+href+'">'+inner+'</a>')
+             :('<div class="goal">'+inner+'</div>');
 }
 let d={};
 async function load(){
@@ -1107,7 +1145,7 @@ async function load(){
   renderFunil('leadsFunil', d.leads_funil, 'leads', true);
   document.getElementById('leadsConv').textContent=pct(d.leads_reservou,total)+'%';
   document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reserva de fato)', d.leads_reservou,
-    pct(d.leads_reservou,total)+'% dos leads (casado por telefone com reservas ativas)');
+    pct(d.leads_reservou,total)+'% dos leads · clique para ver quem', lurl('reservou'));
   document.getElementById('leadsInd').innerHTML=
     '<a class="chip" title="Leads fora da área (Orlando + 30 milhas)" href="'+lurl('fora')+'">'
     +'<span class="chip-ic">📍</span><span class="chip-txt">Fora de Orlando</span>'
@@ -1208,10 +1246,13 @@ async function load(){
     const hqBadge = l.hq_match
       ? `<br><span title="tentativa de reserva na HQ (via IP)" style="color:#7ee0a8">🏁 ${l.hq_step_label} (step ${l.hq_step})</span>`
       : '';
+    const reservaBadge = l.reservou
+      ? `<br><span title="tem reserva ativa na HQ (casado por telefone)" style="color:#f0c04a;font-weight:700">🎫 Reservou</span>`
+      : '';
     const tr=document.createElement('tr');
     tr.innerHTML=`<td>${l.nome||''}</td><td>${l.telefone||''}</td><td>${(l.idioma||'').toUpperCase()}</td>
       <td style="white-space:nowrap">${tag(l.situacao)}${l.situacao_manual?' <span title="ajustado manualmente" style="color:#8fd0ff">✎</span>':''}<br>${selectSit(l.key,l.situacao_manual)}</td>
-      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span><br><span style="font-size:11px">${siteBadge}${hqBadge}</span></td>
+      <td style="font-size:12px;max-width:230px">${(l.resumo||'—')}</td><td style="white-space:nowrap">${l.atualizado||''}<br><span style="font-size:11px">${modo}</span><br><span style="font-size:11px">${siteBadge}${hqBadge}${reservaBadge}</span></td>
       <td style="white-space:nowrap"><button onclick="document.getElementById('t${i}').style.display=document.getElementById('t${i}').style.display==='block'?'none':'block'">ver conversa</button>
       <button style="background:#5a1f1f;color:#ffb4b4;margin-left:6px" onclick='del(${JSON.stringify(l.key||"")})'>excluir</button></td>`;
     tb.appendChild(tr);
@@ -1248,8 +1289,13 @@ async function load(){
            ${hqLinha}
          </div>`
       : `<div style="color:#5b6b75;font-size:12px;margin:8px 0 0">🔗 Sem clique registrado no link do site.</div>`;
+    const reservaBloco = (l.reservou && l.reserva_info)
+      ? `<div style="background:#241e07;border:1px solid rgba(240,192,74,.45);border-radius:8px;padding:9px 11px;margin:8px 0 0;font-size:12px;color:#f0d38a">
+           🎫 <b>Reserva de fato na HQ</b> · ${l.reserva_info.nome||'—'}${l.reserva_info.veiculo?(' · '+l.reserva_info.veiculo):''}${l.reserva_info.pickup?(' · retirada '+l.reserva_info.pickup):''}${l.reserva_info.status?(' · '+l.reserva_info.status):''}${l.reserva_info.id?(' · #'+l.reserva_info.id):''}
+         </div>`
+      : '';
     const conv=(l.transcricao||'(sem mensagens)')+(l.motivo?('\\n\\n[Motivo: '+l.motivo+']'):'');
-    tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}${jornada}
+    tr2.innerHTML=`<td colspan="7"><div id="t${i}" style="display:none">${painel}${reservaBloco}${jornada}
       <div class="conv">${fmtConversa(conv)}</div></div></td>`;
     tb.appendChild(tr2);
   });
