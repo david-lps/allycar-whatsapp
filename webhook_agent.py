@@ -1081,8 +1081,8 @@ function renderFunil(elId, stages, cls, linkable){
     const w=topo>0?Math.max(3,Math.round(s.valor*100/topo)):0;
     const pTop=pct(s.valor,topo);
     const prev=i>0?stages[i-1].valor:s.valor;
-    const drop=i>0?pct(prev-s.valor,prev):0;
-    const sub=i===0?'100% · topo do funil':(pTop+'% do topo · −'+drop+'% vs. etapa anterior');
+    const ret=i>0?pct(s.valor,prev):100;      // retenção: quanto passou da etapa anterior
+    const sub=i===0?'100% · topo do funil':(pTop+'% do topo · '+ret+'% da etapa anterior');
     const inner='<div class="st-head"><span class="st-name">'+s.nome+'</span>'
       +'<span class="st-val">'+s.valor+(i>0?(' <em>· '+pTop+'%</em>'):'')+'</span></div>'
       +'<div class="track"><div class="fill '+cls+'" style="width:'+w+'%"></div></div>'
