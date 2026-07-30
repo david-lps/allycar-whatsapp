@@ -1506,7 +1506,20 @@ def braza_pix():
         cod_customer = data.get('cod_customer') or data.get('codCustomer')
         if not cod_quote or not cod_customer:
             return _braza_json({'ok': False, 'error': 'cod_quote e cod_customer são obrigatórios'}, 400)
-        return _braza_json({'ok': True, 'pix': braza.create_pix(cod_quote, cod_customer)})
+        pix = braza.create_pix(cod_quote, cod_customer)
+        # Vigia no SERVIDOR: avisa a equipe mesmo se o cliente fechar a página
+        try:
+            pix_id = pix.get('id') or pix.get('invoiceIdPix')
+            if pix_id:
+                threading.Thread(
+                    target=_watch_pix_payment,
+                    args=(pix_id, cod_quote),
+                    daemon=True,
+                ).start()
+                print(f'[braza/pix] vigia de PIX iniciado (pix={pix_id} cod_quote={cod_quote})')
+        except Exception as e:
+            print(f'[braza/pix] não iniciou o vigia: {e}')
+        return _braza_json({'ok': True, 'pix': pix})
     except Exception as e:
         return _braza_fail(e)
 
@@ -1662,6 +1675,42 @@ def _watch_cc_payment(cc_uuid, cod_quote, expires_in=0):
             print(f'[braza/cc-watch] erro consultando status: {e}')
         time.sleep(7)
     print(f'[braza/cc-watch] encerrado sem aprovação (cod_quote={cod_quote})')
+
+
+def _watch_pix_payment(pix_id, cod_quote, expires_in=0):
+    """
+    Vigia do PIX no SERVIDOR (espelha o do cartão). No PIX o cliente costuma pagar
+    no app do banco e FECHAR a página — então não dá pra depender do polling da
+    pagar-braza.html. Aqui o servidor consulta o status ele mesmo até PAID e dispara
+    o e-mail. Best-effort (a thread não sobrevive a restart do serviço). Compartilha
+    _braza_notified com o /confirm p/ não duplicar e-mail.
+    """
+    window = min((int(expires_in) if expires_in else 1800) + 60, 45 * 60)  # cap 45 min
+    deadline = time.time() + window
+    while time.time() < deadline:
+        try:
+            estado = str(braza.pix_status(pix_id).get('status', '')).upper()
+            if estado == 'PAID':
+                key = cod_quote or pix_id
+                if key in _braza_notified:
+                    return
+                _braza_notified.add(key)
+                try:
+                    sale = braza.get_sale(cod_quote) if cod_quote else {}
+                except Exception:
+                    sale = {}
+                order_ref = sale.get('identifier') or cod_quote or pix_id
+                _notify_team_payment(order_ref, 'PAID', sale.get('amount'),
+                                     sale.get('paymentMethod') or 'pix')
+                print(f'[braza/pix-watch] pago e notificado (pix={pix_id} cod_quote={cod_quote})')
+                return
+            if estado in ('EXPIRED', 'REFUNDED', 'CANCELED', 'CANCELLED'):
+                print(f'[braza/pix-watch] encerrado por status {estado} (pix={pix_id})')
+                return
+        except Exception as e:
+            print(f'[braza/pix-watch] erro consultando status: {e}')
+        time.sleep(10)
+    print(f'[braza/pix-watch] janela encerrada sem pagamento (pix={pix_id})')
 
 
 @app.route('/api/braza/confirm', methods=['POST', 'OPTIONS'])
