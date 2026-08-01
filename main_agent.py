@@ -187,9 +187,25 @@ PREÇO — REGRA ABSOLUTA:
 - Sempre que o cliente perguntar/negociar valores, APROVEITE para lembrar que, cadastrando o
   email no site allycar.com, ele ganha um cupom de 5% de desconto na PRIMEIRA reserva online.
 
+HORÁRIOS, TOLERÂNCIA E IMPOSTOS (regras da casa — siga à risca):
+- SEMPRE pergunte o HORÁRIO de RETIRADA e o HORÁRIO de DEVOLUÇÃO junto com as datas.
+- Se o cliente informar só as datas, ASSUMA 09:00 na retirada e 09:00 na devolução, e diga a
+  ele que considerou esses horários (confirme com leveza, sem travar a conversa).
+- Passe SEMPRE os horários para consultar_disponibilidade_precos (hora_retirada/hora_devolucao),
+  para o preço refletir o período real.
+- TOLERÂNCIA DE 1 HORA: a devolução tem 1 hora de tolerância sobre o horário de retirada.
+  Passou disso, entra MAIS UMA DIÁRIA. Ex.: retirou 09:00 e devolve 11:00 → cobra diária extra.
+  Avise o cliente com transparência quando o horário pedido por ele cair nessa situação — é o
+  nosso compromisso de ZERO SURPRESAS (e ofereça ajustar o horário para evitar a diária extra).
+- CAR RENTAL SURCHARGE: é cobrado por DIA DE CALENDÁRIO (US$ 2 por dia), contando os dois
+  extremos e INDEPENDENTE do horário. Ex.: retirada 01/10 e devolução 03/10 = 3 dias.
+  NÃO é o número de diárias. Nunca faça essa conta de cabeça: a ferramenta
+  calcular_total_com_impostos conta os dias de calendário sozinha quando você passa as DATAS.
+- SALES TAX (6,5%): incide sobre a soma das diárias + o total do Car rental surcharge.
+
 FLUXO (conduza nesta ordem):
 - S1 DESCOBERTA: pergunte de forma leve — quantos adultos e crianças (idades), quantas malas,
-  datas de chegada/volta, e SE JÁ COMPRARAM AS PASSAGENS. Quem já comprou é lead quente; quem
+  datas E HORÁRIOS de retirada e devolução, e SE JÁ COMPRARAM AS PASSAGENS. Quem já comprou é lead quente; quem
   não comprou entra em nutrição (ofereça lembrete, não force). QUALQUER opção do menu inicial
   (inclusive por nº de assentos) entra aqui — NUNCA pule direto para preços.
 - S2 RECOMENDAÇÃO: use recomendar_veiculo para o perfil e consultar_disponibilidade_precos
@@ -297,6 +313,8 @@ TOOLS = [
             "properties": {
                 "data_retirada": {"type": "string", "description": "yyyy-mm-dd"},
                 "data_devolucao": {"type": "string", "description": "yyyy-mm-dd"},
+                "hora_retirada": {"type": "string", "description": "HH:MM (padrão 09:00 se o cliente não informar)"},
+                "hora_devolucao": {"type": "string", "description": "HH:MM (padrão 09:00 se o cliente não informar)"},
                 "lugares": {"type": "integer", "description": "Assentos mínimos desejados (opcional)"},
             },
             "required": ["data_retirada", "data_devolucao"],
@@ -345,15 +363,19 @@ TOOLS = [
         "description": (
             "Calcula o VALOR TOTAL COM IMPOSTOS. Use SOMENTE se o cliente PEDIR o total com "
             "impostos (não ofereça de cara). Passe o total SEM impostos (o total_usd retornado "
-            "na consulta de preços) e o nº de diárias. Retorna o total exato — informe esse valor."
+            "na consulta de preços) e as DATAS de retirada e devolução (yyyy-mm-dd) — o Car "
+            "rental surcharge é por DIA DE CALENDÁRIO (01/10 a 03/10 = 3 dias) e a ferramenta "
+            "faz essa contagem sozinha. Retorna o total exato — informe esse valor."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "total_base_usd": {"type": "number", "description": "Total sem impostos (total_usd da consulta de preços)"},
-                "num_dias": {"type": "integer", "description": "Número de diárias"},
+                "data_retirada": {"type": "string", "description": "yyyy-mm-dd (para contar os dias de calendário)"},
+                "data_devolucao": {"type": "string", "description": "yyyy-mm-dd (para contar os dias de calendário)"},
+                "num_dias": {"type": "integer", "description": "Só use se NÃO tiver as datas: nº de dias de CALENDÁRIO"},
             },
-            "required": ["total_base_usd", "num_dias"],
+            "required": ["total_base_usd"],
             "additionalProperties": False,
         },
     },
@@ -428,6 +450,27 @@ def _recomendar_veiculo(adultos=0, criancas=0, malas=0, preferencia=None):
     return {"modelo": c["modelo"], "tipo": c["tipo"], "lugares": c["lugares"], "bagagem": c["bagagem"]}
 
 
+HORA_PADRAO = "09:00"  # política Allycar: sem horário informado, assume 09:00
+
+
+def _hora_valida(hora):
+    """Normaliza 'HH:MM' (aceita '9', '9h', '9:00', '09h30'). Vazio/inválido → 09:00."""
+    txt = str(hora or "").strip().lower().replace("h", ":")
+    if not txt:
+        return HORA_PADRAO
+    partes = [p for p in txt.replace(".", ":").split(":") if p.strip().isdigit()]
+    if not partes:
+        return HORA_PADRAO
+    try:
+        h = int(partes[0])
+        m = int(partes[1]) if len(partes) > 1 else 0
+    except ValueError:
+        return HORA_PADRAO
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return HORA_PADRAO
+    return f"{h:02d}:{m:02d}"
+
+
 def _extrair_assentos(features):
     for f in features or []:
         label = (f.get("label") or "").lower()
@@ -438,12 +481,14 @@ def _extrair_assentos(features):
     return None
 
 
-def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=None, top_n=6):
-    """Retorna veículos disponíveis com PREÇO REAL da HQ (diária/total já com impostos)."""
+def _consultar_disponibilidade_precos(data_retirada, data_devolucao, hora_retirada=None,
+                                      hora_devolucao=None, lugares=None, top_n=6):
+    """Retorna veículos disponíveis com PREÇO REAL da HQ (diária/total já com impostos).
+    Horários: padrão 09:00 quando o cliente não informa (política Allycar)."""
     import requests
     payload = {
         "pick_up_date": data_retirada, "return_date": data_devolucao,
-        "pick_up_time": "10:00", "return_time": "10:00",
+        "pick_up_time": _hora_valida(hora_retirada), "return_time": _hora_valida(hora_devolucao),
         "brand_id": HQ_BRAND_ID, "pick_up_location": HQ_PICKUP_LOCATION,
         "return_location": HQ_PICKUP_LOCATION, "currency": "USD",
     }
@@ -490,23 +535,42 @@ def _consultar_disponibilidade_precos(data_retirada, data_devolucao, lugares=Non
     return {"status": "ok", "obs": "Valores SEM impostos (impostos/taxas à parte).", "veiculos": resultados[:top_n]}
 
 
-def _calcular_total_com_impostos(total_base_usd, num_dias):
+def _dias_de_calendario(data_retirada, data_devolucao):
+    """Dias de CALENDÁRIO entre retirada e devolução, INCLUSIVE os dois extremos.
+    Ex.: 2026-10-01 → 2026-10-03 = 3 dias (01, 02 e 03). None se as datas forem inválidas."""
+    try:
+        d1 = datetime.strptime(str(data_retirada)[:10], "%Y-%m-%d").date()
+        d2 = datetime.strptime(str(data_devolucao)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    return max((d2 - d1).days + 1, 1)
+
+
+def _calcular_total_com_impostos(total_base_usd, data_retirada=None, data_devolucao=None, num_dias=None):
     """
-    Total com impostos = (base sem impostos + $2 x diárias) + 6,5% de Sales Tax.
-    Ex: base 455, 7 dias → (455 + 14) + 30,49 = 499,49.
+    Total com impostos = (base sem impostos + $2 x DIAS DE CALENDÁRIO) + 6,5% de Sales Tax.
+
+    O Car rental surcharge é cobrado por DIA DE CALENDÁRIO (não por diária): de
+    01/10 a 03/10 são 3 dias, independentemente do horário. Por isso o cálculo
+    prefere as DATAS; num_dias é só um fallback.
+    Ex: base 455, 01/10→08/10 (8 dias de calendário) → (455 + 16) + 30,62 = 501,62.
     """
     base = _round2(total_base_usd or 0)
-    dias = max(int(num_dias or 1), 1)
+    dias = _dias_de_calendario(data_retirada, data_devolucao)
+    if dias is None:
+        dias = max(int(num_dias or 1), 1)
     surcharge = _round2(CAR_RENTAL_SURCHARGE_DIA * dias)
     subtotal = _round2(base + surcharge)
     sales_tax = _round2(subtotal * SALES_TAX)
     total = _round2(subtotal + sales_tax)
     return {
         "base_sem_impostos_usd": base,
+        "dias_de_calendario": dias,
         "car_rental_surcharge_usd": surcharge,
         "sales_tax_usd": sales_tax,
         "total_com_impostos_usd": total,
-        "detalhe": f"${base} + ${surcharge} (surcharge) + ${sales_tax} (6,5% sales tax) = ${total}",
+        "detalhe": (f"${base} + ${surcharge} (surcharge: {dias} dias de calendário x $2) "
+                    f"+ ${sales_tax} (6,5% sales tax) = ${total}"),
     }
 
 
