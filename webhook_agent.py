@@ -741,6 +741,39 @@ def health():
     }, 200
 
 
+@app.route("/agent/health/sheets", methods=["GET"])
+def health_sheets():
+    """Diagnóstico do Google Sheets: mostra o erro REAL (que o try/except engole).
+    Testa (1) conexão, (2) leitura dos leads e (3) a aba de log das conversas.
+    Só faz escrita de teste com ?write=1."""
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    out = {"conexao": None, "leitura_leads": None, "aba_log": None, "escrita": "não testada"}
+    try:
+        sheet = conectar_google_sheets()
+        out["conexao"] = "ok"
+        out["planilha"] = getattr(getattr(sheet, "spreadsheet", None), "title", "?")
+    except Exception as e:
+        out["conexao"] = f"FALHOU: {type(e).__name__}: {e}"
+        return out, 200
+    try:
+        out["leitura_leads"] = f"ok — {len(sheet.get_all_records())} linhas"
+    except Exception as e:
+        out["leitura_leads"] = f"FALHOU: {type(e).__name__}: {e}"
+    try:
+        ws = sheet.spreadsheet.worksheet("Leads_Qualificados")
+        out["aba_log"] = f"ok — {ws.row_count} linhas alocadas"
+        if request.args.get("write") == "1":
+            ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                           "DIAGNOSTICO", "-", "teste de escrita", "pode apagar esta linha"])
+            out["escrita"] = "ok — linha DIAGNOSTICO adicionada"
+    except Exception as e:
+        out["aba_log"] = f"FALHOU: {type(e).__name__}: {e}"
+        if request.args.get("write") == "1":
+            out["escrita"] = "não executada (aba indisponível)"
+    return out, 200
+
+
 # ------- teste conversacional pelo navegador (sem Twilio/WhatsApp) -------
 @app.route("/agent/chat", methods=["POST"])
 def agent_chat():
