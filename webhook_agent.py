@@ -762,7 +762,10 @@ def health_sheets():
         out["leitura_leads"] = f"FALHOU: {type(e).__name__}: {e}"
     try:
         ws = sheet.spreadsheet.worksheet("Leads_Qualificados")
-        out["aba_log"] = f"ok — {ws.row_count} linhas alocadas"
+        valores = ws.get_all_values()
+        out["aba_log"] = f"ok — {len(valores)} linhas preenchidas ({ws.row_count} alocadas)"
+        out["ultimo_registro"] = valores[-1][:4] if valores else "(vazia)"
+        out["penultimo_registro"] = valores[-2][:4] if len(valores) > 1 else ""
         if request.args.get("write") == "1":
             ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                            "DIAGNOSTICO", "-", "teste de escrita", "pode apagar esta linha"])
