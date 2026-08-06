@@ -19,11 +19,19 @@ from main_agent import HQ_API_HOST, HQ_API_AUTH, HQ_BRAND_ID
 
 _ATTEMPTS_TTL = 300      # 5 min — evita bater na HQ a cada abertura do painel
 _CLASSES_TTL = 3600      # 1 h
+_RESERVAS_TTL = 900      # 15 min
 _ATTEMPTS_LIMIT = 1000   # tentativas mais recentes (cobre semanas de leads)
+
+# Status que significam "reserva existiu de verdade": futura, em curso e concluída.
+# 'completed' é essencial — quando o cliente devolve o carro a reserva sai de
+# open/rental, e sem isso o lead sumiria do painel. 'cancelled' e 'pending' ficam
+# de fora (não são reserva confirmada).
+STATUS_RESERVA_REAL = ("open", "rental", "completed")
 
 _cache = {
     "attempts": None, "attempts_ts": 0.0, "idx": None,
     "classes": None, "classes_ts": 0.0,
+    "reservas": None, "reservas_ts": 0.0,
 }
 
 # Rótulo de cada passo do funil (last_step da HQ). O pagamento (step 6) é feito
@@ -90,6 +98,44 @@ def _attempts():
     except Exception as e:
         print(f"⚠️ hq_attempts: falha ao carregar reservation-attempts: {e}")
     return _cache["attempts"] or [], _cache["idx"] or {}
+
+
+def reservas_confirmadas():
+    """
+    TODAS as reservas que existiram de fato (open + rental + completed), com cache.
+
+    Diferente de main.buscar_reservas_ativas_com_cache (só open+rental), que existe
+    para NÃO disparar a quem tem reserva ATIVA. Aqui o objetivo é o histórico: um
+    lead que alugou e já devolveu (completed) continua sendo uma conversão.
+    """
+    import json as _json
+    import urllib.parse as _url
+    now = time.time()
+    if _cache["reservas"] is not None and (now - _cache["reservas_ts"]) < _RESERVAS_TTL:
+        return _cache["reservas"]
+    todas = []
+    try:
+        for status in STATUS_RESERVA_REAL:
+            filtros = _url.quote(_json.dumps(
+                [{"type": "string", "column": "status", "operator": "equals", "value": status}]))
+            for pagina in range(1, 21):  # limite de segurança
+                r = requests.get(
+                    f"{HQ_API_HOST}/api-america-miami/car-rental/reservations"
+                    f"?page={pagina}&filters={filtros}",
+                    headers={"Authorization": HQ_API_AUTH, "Accept": "application/json"},
+                    timeout=20,
+                )
+                r.raise_for_status()
+                lote = r.json().get("data", [])
+                if not lote:
+                    break
+                todas.extend(lote)
+        _cache["reservas"] = todas
+        _cache["reservas_ts"] = now
+    except Exception as e:
+        print(f"⚠️ hq_attempts: falha ao carregar reservas: {e}")
+        return _cache["reservas"] or []
+    return todas
 
 
 def funil_global():

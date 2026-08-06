@@ -30,8 +30,7 @@ from main import (
     formatar_telefone,
     esta_no_horario_comercial,
     descobrir_pais_por_telefone,
-    cliente_ja_tem_reserva,
-    buscar_reservas_ativas_com_cache,   # reservas de fato (open + rental)
+    cliente_ja_tem_reserva,              # disparo: pula quem tem reserva ATIVA (open+rental)
     enviar_mensagem_inicial_com_opcoes,  # EUA: reaproveita o email+SMS da produção
 )
 import main_agent
@@ -315,12 +314,9 @@ def _tel_digits(s):
 
 
 def _reservas_ativas_info():
-    """(total, set de telefones em dígitos) das reservas ativas (open+rental)."""
-    try:
-        reservas = buscar_reservas_ativas_com_cache() or []
-    except Exception as e:
-        print(f"⚠️ stats: falha ao buscar reservas ativas: {e}")
-        return 0, set()
+    """(total, set de telefones em dígitos) das reservas confirmadas.
+    Usa open+rental+COMPLETED: quem alugou e já devolveu continua sendo conversão."""
+    reservas = _reservas_ativas_lista()
     fones = set()
     for r in reservas:
         tel = _tel_digits((r.get("customer") or {}).get("phone_number"))
@@ -330,11 +326,11 @@ def _reservas_ativas_info():
 
 
 def _reservas_ativas_lista():
-    """Lista de reservas ativas (open+rental); [] em caso de falha."""
+    """Reservas confirmadas (open + rental + completed); [] em caso de falha."""
     try:
-        return buscar_reservas_ativas_com_cache() or []
+        return hq_attempts.reservas_confirmadas() or []
     except Exception as e:
-        print(f"⚠️ falha ao buscar reservas ativas: {e}")
+        print(f"⚠️ falha ao buscar reservas confirmadas: {e}")
         return []
 
 
