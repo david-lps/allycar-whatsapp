@@ -951,6 +951,25 @@ def _cors(response):
     return response
 
 # ── 1. Criar contato + retornar contact_id ────────────────────────────────
+# =====================================
+# SUNNY STORAGE — landing de UM veículo só (allycar.com/sunnystorage)
+# O veículo, a brand e o local são FORÇADOS aqui no servidor. O navegador
+# manda esses campos, mas eles são IGNORADOS: sem isso, qualquer um com o
+# DevTools trocaria o vehicle_class_id e reservaria um Escalade pelo preço
+# da van. Mesma proteção que já é usada nas vans do transfer.
+# =====================================
+SUNNY_VEHICLE_CLASS_ID = os.getenv("SUNNY_VEHICLE_CLASS_ID", "20")  # Ford Transit 250 Cargo Van (key 0039, $159/dia)
+SUNNY_BRAND_ID         = os.getenv("SUNNY_BRAND_ID", "1")
+SUNNY_LOCATION_ID      = os.getenv("SUNNY_LOCATION_ID", "5")
+
+def _sunny_forced(data, rota):
+    """Devolve (brand_id, location_id, vehicle_class_id) forçados e loga tentativa de troca."""
+    enviado = str(data.get('vehicle_class_id') or '')
+    if enviado and enviado != str(SUNNY_VEHICLE_CLASS_ID):
+        print(f"⚠️ [{rota}] vehicle_class_id do cliente ({enviado}) IGNORADO — forçando {SUNNY_VEHICLE_CLASS_ID}")
+    return SUNNY_BRAND_ID, SUNNY_LOCATION_ID, SUNNY_VEHICLE_CLASS_ID
+
+
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato via /car-rental/reservations/customer (multipart)."""
@@ -964,7 +983,9 @@ def hq_create_contact():
  
         data = request.get_json()
         print(f"[create-contact] payload recebido: {data}")
- 
+
+        _s_brand, _s_loc, _s_class = _sunny_forced(data, 'create-contact')
+
         # Campos confirmados via curl --form (multipart/form-data)
         # field_254 = DL Number (campo customizado da conta)
         fields = {
@@ -977,10 +998,10 @@ def hq_create_contact():
             'field_254':      data.get('license_number', ''),
             'pick_up_date':   data.get('pick_up_date', ''),
             'return_date':    data.get('return_date', ''),
-            'pick_up_location': data.get('pick_up_location', '2'),
-            'return_location':  data.get('return_location', '2'),
-            'brand_id':         data.get('brand_id', '1'),
-            'vehicle_class_id': data.get('vehicle_class_id', '15'),
+            'pick_up_location': _s_loc,
+            'return_location':  _s_loc,
+            'brand_id':         _s_brand,
+            'vehicle_class_id': _s_class,
         }
  
         # Monta multipart manualmente
@@ -1059,15 +1080,17 @@ def hq_create_reservation():
     try:
         data = request.get_json()
 
+        _s_brand, _s_loc, _s_class = _sunny_forced(data, 'create-reservation')
+
         params = {
             'pick_up_date':                   data.get('pick_up_date'),
             'return_date':                    data.get('return_date'),
             'pick_up_time':                   data.get('pick_up_time'),
             'return_time':                    data.get('return_time'),
-            'brand_id':                       data.get('brand_id', 1),
-            'pick_up_location':               data.get('pick_up_location', 2),
-            'return_location':                data.get('return_location', 2),
-            'vehicle_class_id':               data.get('vehicle_class_id', 15),
+            'brand_id':                       _s_brand,
+            'pick_up_location':               _s_loc,
+            'return_location':                _s_loc,
+            'vehicle_class_id':               _s_class,
             'customer_id':                    data.get('customer_id'),
             'customer_first_name':            data.get('customer_first_name'),
             'customer_last_name':             data.get('customer_last_name'),
@@ -1109,11 +1132,11 @@ Pick-up: {data.get('pick_up_date')} às {data.get('pick_up_time')}
 Return: {data.get('return_date')} às {data.get('return_time')}
 
 Local:
-Pick-up location ID: {data.get('pick_up_location')}
-Return location ID: {data.get('return_location')}
+Pick-up location ID: {_s_loc}
+Return location ID: {_s_loc}
 
 Veículo:
-Class ID: {data.get('vehicle_class_id')}
+Class ID: {_s_class} (Ford Transit 250 Cargo Van)
 
 Documento:
 CNH: {data.get('customer_driver_license_number')}
