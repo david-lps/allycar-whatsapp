@@ -1079,7 +1079,7 @@ def hq_diag():
     Serve pra saber se o deploy do Railway já pegou a versão nova."""
     return _cors(app.response_class(
         response=json.dumps({
-            'build':               'gateway-fix-1',
+            'build':               'gateway-fix-2',
             'payment_method_id':   HQ_STRIPE_PAYMENT_METHOD_ID,
             'payment_gateway_id':  HQ_PAYMENT_GATEWAY_ID,
             'sunny_vehicle_class': SUNNY_VEHICLE_CLASS_ID,
@@ -1286,7 +1286,13 @@ HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", HQ_PICKUP_LOCATIO
 # ignorava o pagamento — sem transação e sem payment_link.
 # Nome da env var mudou de propósito: se sobrou HQ_STRIPE_PAYMENT_METHOD_ID=4
 # no Railway, ela não envenena mais o valor.
-HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_PAYMENT_METHOD_ID", "11")   # Credit Card (gateway 4, Stripe)
+#
+# 🚨 O método TEM que pertencer ao gateway. Havia (e pode haver ainda) uma env var
+# HQ_PAYMENT_METHOD_ID=12 no Railway — 12 é "Affirm", do gateway 5 — e ela vencia o
+# código, jogando o checkout inteiro pro BNPL. Por isso o método não é mais lido cru
+# da env: ele é derivado do gateway, e uma env divergente é ignorada com aviso.
+_CARD_METHOD_BY_GATEWAY = {"4": "11"}   # gateway 4 "Allycar (Online) new" -> method 11 "Credit Card"
+_env_method = os.getenv("HQ_PAYMENT_METHOD_ID")
 
 # ⚠️ SÓ o método NÃO basta. Sem o gateway explícito a HQ escolhe um default —
 # e o default dela é o gateway 5 ("Buy Now Pay Later new"), o que faz o checkout
@@ -1296,6 +1302,13 @@ HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_PAYMENT_METHOD_ID", "11")   # Credit
 # Mandamos os dois nomes porque a HQ não documenta qual reconhece e ignorar
 # parâmetro desconhecido é inofensivo (foi o que ela fez com payment_method_id).
 HQ_PAYMENT_GATEWAY_ID = os.getenv("HQ_PAYMENT_GATEWAY_ID", "4")   # "Allycar (Online) new"
+
+_expected_method = _CARD_METHOD_BY_GATEWAY.get(HQ_PAYMENT_GATEWAY_ID)
+if _expected_method and _env_method and _env_method != _expected_method:
+    print(f"⚠️ [boot] HQ_PAYMENT_METHOD_ID={_env_method} NÃO pertence ao gateway "
+          f"{HQ_PAYMENT_GATEWAY_ID} (cartão = {_expected_method}). Env var IGNORADA — "
+          f"apague-a no Railway pra evitar confusão.")
+HQ_STRIPE_PAYMENT_METHOD_ID = _expected_method or _env_method or "11"
 print(f"[boot] pagamento HQ -> gateway={HQ_PAYMENT_GATEWAY_ID} method={HQ_STRIPE_PAYMENT_METHOD_ID} "
       f"(esperado: gateway 4 / method 11 = Credit Card)")
 
