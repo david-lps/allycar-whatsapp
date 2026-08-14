@@ -11,7 +11,11 @@ import os
 import time
 import threading
 import requests
-import braza   # integração BrazaBank Checkout v2 (PIX + cartão)
+import braza
+# `json` precisa existir no MÓDULO. Antes só havia `import json as _bjson` (BrazaBank)
+# e imports locais dentro de algumas funções — e um `import json` dentro de uma função
+# torna o nome LOCAL na função inteira, quebrando usos anteriores (UnboundLocalError).
+import json   # integração BrazaBank Checkout v2 (PIX + cartão)
 
 load_dotenv()
 
@@ -1060,7 +1064,6 @@ def hq_create_contact():
         return _cors(response)
  
     except Exception as e:
-        import json
         print(f'[create-contact] erro: {e}')
         response = app.response_class(
             response=json.dumps({'success': False, 'message': str(e)}),
@@ -1138,6 +1141,14 @@ def hq_create_reservation():
             else:
                 print('⚠️ [create-reservation] reserva criada SEM payment_link — '
                       'cliente cai na tela de fallback e o pagamento fica manual')
+                # Diagnóstico: sem o corpo inteiro não dá pra saber ONDE a HQ pôs o link
+                # (ou por que não pôs). Logamos as chaves e o corpo cru.
+                if isinstance(_j, dict):
+                    _dd = _j.get('data') or {}
+                    print(f'   ↳ chaves de data: {list(_dd.keys()) if isinstance(_dd, dict) else type(_dd).__name__}')
+                    if isinstance(_dd, dict) and isinstance(_dd.get('transaction'), dict):
+                        print(f'   ↳ chaves de data.transaction: {list(_dd["transaction"].keys())}')
+                print(f'   ↳ corpo cru da HQ: {resp.text[:2000]}')
 
         # ================================
         # ENVIO DE EMAIL (SOMENTE SUCESSO)
@@ -1267,7 +1278,6 @@ def _cors_transfer(response):
     return response
 
 def _json_resp(payload, status=200):
-    import json
     return _cors_transfer(app.response_class(
         response=json.dumps(payload), status=status, mimetype="application/json"))
 
