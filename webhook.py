@@ -1107,6 +1107,10 @@ def hq_create_reservation():
         }
         if HQ_STRIPE_PAYMENT_METHOD_ID:
             params['payment_method_id'] = HQ_STRIPE_PAYMENT_METHOD_ID
+        if HQ_PAYMENT_GATEWAY_ID:
+            # sem isto a HQ cai no gateway BNPL e o cliente não vê cartão
+            params['gateway_id']         = HQ_PAYMENT_GATEWAY_ID
+            params['payment_gateway_id'] = HQ_PAYMENT_GATEWAY_ID
 
         # Remove chaves com valor None para não poluir a URL
         params = {k: v for k, v in params.items() if v is not None}
@@ -1269,7 +1273,17 @@ HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", HQ_PICKUP_LOCATIO
 # Nome da env var mudou de propósito: se sobrou HQ_STRIPE_PAYMENT_METHOD_ID=4
 # no Railway, ela não envenena mais o valor.
 HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_PAYMENT_METHOD_ID", "11")   # Credit Card (gateway 4, Stripe)
-print(f"[boot] payment_method_id em uso: {HQ_STRIPE_PAYMENT_METHOD_ID} (esperado: 11 = Credit Card)")
+
+# ⚠️ SÓ o método NÃO basta. Sem o gateway explícito a HQ escolhe um default —
+# e o default dela é o gateway 5 ("Buy Now Pay Later new"), o que faz o checkout
+# abrir só com Affirm/Klarna/Afterpay e NENHUMA opção de cartão.
+# Comprovado: reserva 361 (sem gateway) -> gw 5 / Affirm;
+#             reserva 362 (com gateway) -> gw 4 / Credit Card.
+# Mandamos os dois nomes porque a HQ não documenta qual reconhece e ignorar
+# parâmetro desconhecido é inofensivo (foi o que ela fez com payment_method_id).
+HQ_PAYMENT_GATEWAY_ID = os.getenv("HQ_PAYMENT_GATEWAY_ID", "4")   # "Allycar (Online) new"
+print(f"[boot] pagamento HQ -> gateway={HQ_PAYMENT_GATEWAY_ID} method={HQ_STRIPE_PAYMENT_METHOD_ID} "
+      f"(esperado: gateway 4 / method 11 = Credit Card)")
 
 # Origens permitidas para o fluxo de reserva (inclui localhost p/ dev).
 TRANSFER_ALLOWED_ORIGINS = {
@@ -1463,6 +1477,10 @@ def transfer_confirm():
         }
         if HQ_STRIPE_PAYMENT_METHOD_ID:
             params['payment_method_id'] = HQ_STRIPE_PAYMENT_METHOD_ID
+        if HQ_PAYMENT_GATEWAY_ID:
+            # sem isto a HQ cai no gateway BNPL e o cliente não vê cartão
+            params['gateway_id']         = HQ_PAYMENT_GATEWAY_ID
+            params['payment_gateway_id'] = HQ_PAYMENT_GATEWAY_ID
         # DL Number obrigatório na HQ; placeholder pois o cliente não dirige.
         params['customer_driver_license_number'] = data.get('customer_driver_license_number') or 'CHAUFFEUR-SERVICE'
         params = {k: v for k, v in params.items() if v is not None}
