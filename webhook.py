@@ -1259,7 +1259,17 @@ Nascimento: {data.get('customer_birthdate')}
 HQ_VANS_VEHICLE_CLASS_ID    = os.getenv("HQ_VANS_VEHICLE_CLASS_ID", "19")   # Mercedes Sprinter 2500
 HQ_VANS_BRAND_ID            = os.getenv("HQ_VANS_BRAND_ID", HQ_BRAND_ID)
 HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", HQ_PICKUP_LOCATION)
-HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_STRIPE_PAYMENT_METHOD_ID", "4")   # gateway Stripe da brand AllyCar
+# ⚠️ Este campo do /reservations/confirm pede o ID do MÉTODO de pagamento,
+# NÃO o ID do gateway. Ficou "4" por muito tempo por causa dessa confusão:
+#   método  4 = "Klarna"      -> gateway 2 "Allycar (Buy Now Pay Later)"  (geração ANTIGA)
+#   método 11 = "Credit Card" -> gateway 4 "Allycar (Online) new"         (geração NOVA)
+# A brand AllyCar só autoriza os gateways 4/5/6 (supported_gateways), então o
+# método 4 caía num gateway não autorizado: a HQ criava a reserva (200) e
+# ignorava o pagamento — sem transação e sem payment_link.
+# Nome da env var mudou de propósito: se sobrou HQ_STRIPE_PAYMENT_METHOD_ID=4
+# no Railway, ela não envenena mais o valor.
+HQ_STRIPE_PAYMENT_METHOD_ID = os.getenv("HQ_PAYMENT_METHOD_ID", "11")   # Credit Card (gateway 4, Stripe)
+print(f"[boot] payment_method_id em uso: {HQ_STRIPE_PAYMENT_METHOD_ID} (esperado: 11 = Credit Card)")
 
 # Origens permitidas para o fluxo de reserva (inclui localhost p/ dev).
 TRANSFER_ALLOWED_ORIGINS = {
