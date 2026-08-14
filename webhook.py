@@ -1098,7 +1098,12 @@ def hq_create_reservation():
             'customer_birthdate':             data.get('customer_birthdate'),
             'customer_driver_license_number': data.get('customer_driver_license_number'),
             'additional_charges[]':           '',
+            # Self-service: pedimos à HQ o link de pagamento (Stripe) junto da reserva.
+            # A reserva nasce aguardando pagamento; a própria HQ cancela se não for paga.
+            'return_payment_link':            'true',
         }
+        if HQ_STRIPE_PAYMENT_METHOD_ID:
+            params['payment_method_id'] = HQ_STRIPE_PAYMENT_METHOD_ID
 
         # Remove chaves com valor None para não poluir a URL
         params = {k: v for k, v in params.items() if v is not None}
@@ -1110,6 +1115,30 @@ def hq_create_reservation():
             timeout=15
         )
 
+        # A HQ devolve o link do Stripe em data.transaction.payment_link
+        # (mesmos fallbacks usados em /api/transfer/confirm).
+        try:
+            _j = resp.json()
+        except Exception:
+            _j = None
+        payment_link = None
+        if isinstance(_j, dict):
+            _cd = _j.get('data') or {}
+            if isinstance(_cd, dict):
+                payment_link = (
+                    (_cd.get('transaction') or {}).get('payment_link')
+                    or _cd.get('payment_link')
+                    or ((_cd.get('payment') or {}).get('link'))
+                )
+            payment_link = payment_link or _j.get('payment_link')
+
+        if resp.status_code in (200, 201):
+            if payment_link:
+                print(f'[create-reservation] payment_link obtido: {payment_link}')
+            else:
+                print('⚠️ [create-reservation] reserva criada SEM payment_link — '
+                      'cliente cai na tela de fallback e o pagamento fica manual')
+
         # ================================
         # ENVIO DE EMAIL (SOMENTE SUCESSO)
         # ================================
@@ -1120,8 +1149,19 @@ def hq_create_reservation():
                     "david@allycar.com"
                 ]
 
+                _pgto = (
+                    f"Link de pagamento gerado — cliente redirecionado ao Stripe:\n{payment_link}\n\n"
+                    "A reserva fica AGUARDANDO PAGAMENTO. Se o cliente não pagar,\n"
+                    "a própria HQ cancela. Nada a fazer manualmente."
+                    if payment_link else
+                    "⚠️ ATENÇÃO: a HQ NÃO devolveu link de pagamento.\n"
+                    "O cliente viu a tela de fallback — cobrança precisa ser feita MANUALMENTE."
+                )
+
                 conteudo = f"""
-Nova reserva criada com sucesso 🚗
+Nova reserva criada 🚐 (self-service Sunny Storage)
+
+{_pgto}
 
 Cliente:
 Nome: {data.get('customer_first_name')} {data.get('customer_last_name')}
@@ -1152,7 +1192,11 @@ Nascimento: {data.get('customer_birthdate')}
                     json={
                         "from": "Allycar <booking@allycar.com>",
                         "to": destinatarios,
-                        "subject": f"🚗 Nova reserva TACOMA: {data.get('customer_first_name')} {data.get('customer_last_name')}",
+                        "subject": (
+                            f"{'💳' if payment_link else '⚠️'} Reserva VAN Sunny Storage: "
+                            f"{data.get('customer_first_name')} {data.get('customer_last_name')}"
+                            f"{'' if payment_link else ' — SEM LINK DE PAGAMENTO'}"
+                        ),
                         "text": conteudo
                     },
                     timeout=10
@@ -1165,12 +1209,24 @@ Nascimento: {data.get('customer_birthdate')}
 
             except Exception as e:
                 print(f"⚠️ Erro ao enviar email (ignorado): {e}")
-        
-        response = app.response_class(
-            response=resp.text,
-            status=resp.status_code,
-            mimetype='application/json'
-        )
+
+        # Devolve o corpo original da HQ + payment_link no topo, para o site
+        # redirecionar o cliente ao Stripe. Se o corpo não for JSON, passa cru
+        # (o front já sabe lidar com os campos de erro da HQ).
+        if isinstance(_j, dict):
+            _out = dict(_j)
+            _out['payment_link'] = payment_link
+            response = app.response_class(
+                response=json.dumps(_out),
+                status=resp.status_code,
+                mimetype='application/json'
+            )
+        else:
+            response = app.response_class(
+                response=resp.text,
+                status=resp.status_code,
+                mimetype='application/json'
+            )
         return _cors(response)
 
     except Exception as e:
