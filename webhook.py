@@ -1073,6 +1073,20 @@ def hq_create_contact():
         return _cors(response)
 
 # ── 2. Criar reserva ───────────────────────────────────────────────────────
+@app.route('/api/hq/_diag', methods=['GET'])
+def hq_diag():
+    """Diagnóstico: mostra a config de pagamento em uso SEM criar reserva.
+    Serve pra saber se o deploy do Railway já pegou a versão nova."""
+    return _cors(app.response_class(
+        response=json.dumps({
+            'build':               'gateway-fix-1',
+            'payment_method_id':   HQ_STRIPE_PAYMENT_METHOD_ID,
+            'payment_gateway_id':  HQ_PAYMENT_GATEWAY_ID,
+            'sunny_vehicle_class': SUNNY_VEHICLE_CLASS_ID,
+        }),
+        status=200, mimetype='application/json'))
+
+
 @app.route('/api/hq/create-reservation', methods=['POST', 'OPTIONS'])
 def hq_create_reservation():
     """Proxy: cria reserva na HQ Rental evitando CORS no browser."""
