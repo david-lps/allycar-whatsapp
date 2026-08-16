@@ -2201,7 +2201,7 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
         # comentário: é o que a equipe vê de imediato na reserva. A location da
         # reserva é sempre a isenta ("For chauffeur"), então o ponto real de
         # retirada precisa estar visível aqui.
-        'comments': (f'TRANSFER · Retirada: {pickup_address or "a combinar"} · '
+        'comments': (f'TRANSFER · Retirada: {pickup_address or "A COMBINAR com o cliente"} · '
                      f'{seg["start_date"]} {seg["start_time"]} → {seg["end_date"]} {seg["end_time"]} '
                      f'({seg["hours"]}h) · USD {seg["amount"]:.2f} · '
                      f'pedido {ord_token} intervalo {index + 1}')[:500],
@@ -2515,8 +2515,12 @@ def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
 
         <div style="background:#f4f7f4;border-radius:8px;padding:14px 16px;margin-bottom:18px;">
           <p style="margin:0 0 4px;color:#5b7a72;font-size:12px;letter-spacing:.06em;
-                    text-transform:uppercase;">Pick-up</p>
-          <p style="margin:0;color:#0E463E;font-weight:600;">{pickup or 'To be confirmed'}</p>
+                    text-transform:uppercase;">Next step</p>
+          <p style="margin:0;color:#0E463E;font-weight:600;">
+            We'll contact you shortly to arrange the pick-up points</p>
+          <p style="margin:6px 0 0;color:#5b7a72;font-size:13px;">
+            Each time slot can start from a different place — our team will go through
+            your itinerary with you.</p>
         </div>
 
         <p style="margin:0 0 6px;color:#006354;font-weight:bold;font-size:14px;">Included in your ride</p>
