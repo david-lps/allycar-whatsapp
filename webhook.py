@@ -1988,12 +1988,32 @@ HQ_PAY_METHOD_LABEL = os.getenv('HQ_OFFLINE_PAY_METHOD', 'Bank Transfer')
 
 
 def _sv(obj, key, default=None):
-    """Lê um campo tanto de dict quanto de objeto do Stripe (v15 não tem .get)."""
+    """Lê um campo de dict OU de objeto do Stripe.
+
+    Na stripe-python 15 o StripeObject NÃO é dict: não tem .get e dict(obj)
+    levanta KeyError. Só [] e getattr funcionam."""
     if obj is None:
         return default
     if isinstance(obj, dict):
         return obj.get(key, default)
-    return getattr(obj, key, default)
+    try:
+        return obj[key]
+    except Exception:
+        return getattr(obj, key, default)
+
+
+def _pi_log(pi):
+    """Metadata do PaymentIntent como dict simples (não dá para converter direto)."""
+    m = _sv(pi, 'metadata')
+    if isinstance(m, dict):
+        return dict(m)
+    out = {}
+    chaves = ['v', 'ord', 'state', 'cid', 'cap'] + [f'r{i}' for i in range(PKG_MAX_BLOCKS)]
+    for k in chaves:
+        val = _sv(m, k)
+        if val is not None:
+            out[k] = val
+    return out
 
 
 def _pkg_price_block(hours):
@@ -2324,24 +2344,24 @@ def _pkg_fulfil(session):
     Idempotente: os ids já criados ficam gravados na metadata do PaymentIntent,
     então uma reentrega do webhook continua de onde parou."""
     _stripe.api_key = STRIPE_SECRET_KEY
-    meta = dict(_sv(session, 'metadata') or {})
-    ord_token = meta.get('ord')
+    meta = _sv(session, 'metadata') or {}          # dict puro (webhook parseia o JSON cru)
+    ord_token = _sv(meta, 'ord')
     pi_id = _sv(session, 'payment_intent')
     if not isinstance(pi_id, str):
         pi_id = _sv(pi_id, 'id')
     pi = _stripe.PaymentIntent.retrieve(pi_id)
-    log = dict(_sv(pi, 'metadata') or {})
+    log = _pi_log(pi)
 
     if log.get('state') in ('captured', 'voided'):
         print(f'[pkg] {ord_token} já finalizado ({log["state"]})')
         return
 
-    n = int(meta.get('n') or 0)
-    cust = {'first_name': meta.get('fn', ''), 'last_name': meta.get('ln', ''),
-            'email': meta.get('em', ''), 'phone_number': meta.get('ph', '')}
+    n = int(_sv(meta, 'n') or 0)
+    cust = {'first_name': _sv(meta, 'fn', ''), 'last_name': _sv(meta, 'ln', ''),
+            'email': _sv(meta, 'em', ''), 'phone_number': _sv(meta, 'ph', '')}
     segs = []
     for i in range(n):
-        raw = meta.get(f's{i}')
+        raw = _sv(meta, f's{i}')
         if not raw:
             continue
         d, st, h, cents = raw.split('|')
@@ -2414,11 +2434,13 @@ def pkg_stripe_webhook():
     payload = request.get_data()
     try:
         if STRIPE_WEBHOOK_SECRET:
-            event = _stripe.Webhook.construct_event(
+            # a lib valida a assinatura; depois usamos o JSON cru, porque o
+            # objeto que ela devolve não é dict e quebra qualquer .get()
+            _stripe.Webhook.construct_event(
                 payload, request.headers.get('Stripe-Signature', ''), STRIPE_WEBHOOK_SECRET)
         else:
             print('[pkg/webhook] STRIPE_WEBHOOK_SECRET ausente — assinatura NÃO verificada')
-            event = json.loads(payload)
+        event = json.loads(payload)
     except Exception as e:
         print(f'[pkg/webhook] assinatura inválida: {e}')
         return app.response_class(response='{"ok":false}', status=400, mimetype='application/json')
