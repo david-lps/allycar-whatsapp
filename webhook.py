@@ -1277,7 +1277,10 @@ Nascimento: {data.get('customer_birthdate')}
 # =====================================
 HQ_VANS_VEHICLE_CLASS_ID    = os.getenv("HQ_VANS_VEHICLE_CLASS_ID", "19")   # Mercedes Sprinter 2500
 HQ_VANS_BRAND_ID            = os.getenv("HQ_VANS_BRAND_ID", HQ_BRAND_ID)
-HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", HQ_PICKUP_LOCATION)
+# Location 7 ("Office - For chauffeur") tem regra de imposto própria e NÃO
+# aplica Sales Tax — é onde as reservas do transfer são registradas. O ponto de
+# retirada escolhido pelo cliente é gravado em pick_up_location_custom.
+HQ_VANS_LOCATION_ID         = os.getenv("HQ_VANS_LOCATION_ID", "7")
 # ⚠️ Este campo do /reservations/confirm pede o ID do MÉTODO de pagamento,
 # NÃO o ID do gateway. Ficou "4" por muito tempo por causa dessa confusão:
 #   método  4 = "Klarna"      -> gateway 2 "Allycar (Buy Now Pay Later)"  (geração ANTIGA)
@@ -2216,6 +2219,34 @@ def _hq_cancel(reservation_id):
                       headers={'Authorization': HQ_API_TOKEN}, timeout=20)
     except Exception as e:
         print(f'[pkg] falha ao cancelar {reservation_id}: {e}')
+
+
+@app.route('/api/transfer/pkg/locations', methods=['GET', 'OPTIONS'])
+def pkg_locations():
+    """Pontos de retirada — as locations da HQ marcadas como 'Show on website'.
+
+    A reserva em si é sempre registrada em HQ_VANS_LOCATION_ID (a location
+    isenta de imposto); isto aqui é só onde o motorista busca o cliente."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    try:
+        r = requests.get(f'{HQ_API_BASE}/fleets/locations',
+                         headers={'Authorization': HQ_API_TOKEN}, timeout=20)
+        out = []
+        for l in (r.json().get('fleets_locations') or []):
+            if (str(l.get('show_on_website')).lower() == 'true'
+                    and str(l.get('active')).lower() == 'true'
+                    and str(l.get('pick_up_allowed')).lower() == 'true'):
+                out.append({'id': str(l.get('id')),
+                            'label': l.get('label_for_website_translated') or l.get('name'),
+                            'order': l.get('order') or 99})
+        out.sort(key=lambda x: (int(x['order'] or 99), x['label']))
+        for o in out:
+            o.pop('order', None)
+        return _json_resp({'ok': True, 'locations': out}, 200)
+    except Exception as e:
+        print(f'[pkg/locations] erro: {e}')
+        return _json_resp({'ok': False, 'locations': []}, 502)
 
 
 @app.route('/api/transfer/pkg/quote', methods=['POST', 'OPTIONS'])
