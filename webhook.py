@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 import time
 import threading
+import http.client
 import requests
 import braza
 # `json` precisa existir no MÓDULO. Antes só havia `import json as _bjson` (BrazaBank)
@@ -1927,6 +1928,463 @@ def braza_webhook():
                 _hq_register_payment(order_ref, amount_usd, method)
     except Exception as e:
         print(f'[braza/webhook] erro: {e}')
+    return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
+
+
+# =========================================================================
+# TRANSFER — PACOTE MULTI-SEGMENTO COM PAGAMENTO ÚNICO
+#
+# O cliente compra vários blocos avulsos (ex.: dia 11 = 2h, dia 13 = 3h,
+# dia 14 = 1h). A HQ modela reserva como bloco contínuo, então cada bloco
+# vira UMA reserva — mas o cliente paga UMA vez.
+#
+# Estratégia "autorizar primeiro" (authorize-first):
+#   1. /pkg/quote     → precifica (sem efeito colateral)
+#   2. /pkg/checkout  → cria Stripe Checkout com capture_method=manual.
+#                       Nada é escrito na HQ ainda.
+#   3. webhook Stripe → cliente autorizou (dinheiro ainda NÃO capturado):
+#                       cria as N reservas, dá baixa em cada uma e SÓ ENTÃO
+#                       captura. Se algum bloco falhar, captura apenas o que
+#                       existe e libera o resto — nunca há estorno a fazer.
+#
+# Fatos da HQ comprovados em produção (ver DESIGN-multi-segmento.md):
+#   - Qualquer bloco de até 8h é cobrado como 1 diária ($1.500). O preço é
+#     ajustado com manual_discount, aplicado PRÉ-imposto:
+#         total_hq = (1500 - desconto + 2) * 1.065
+#     (o "+2" é uma taxa obrigatória oculta que não aparece na API)
+#   - Baixa de pagamento exige RÓTULOS LITERAIS, não ids numéricos.
+#     Valores numéricos são aceitos (200 OK) e NÃO liquidam nada.
+#   - Só `referral` e `pick_up_location_custom` gravam texto livre.
+#   - `created_at` da HQ é hora de Nova York carimbada como "Z".
+# =========================================================================
+
+import hashlib
+
+try:
+    import stripe as _stripe
+except ImportError:                                    # nunca derruba o bot
+    _stripe = None
+
+STRIPE_SECRET_KEY     = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+TRANSFER_SITE_URL     = os.getenv('TRANSFER_SITE_URL', 'https://www.allycar.com/transfer')
+
+# --- Regra de preço (espelha src/lib/pricing.ts do site) ---
+PKG_HOURLY_RATE   = 250
+PKG_DAY_RATE      = 1500
+PKG_DAILY_FROM_H  = 6      # 6h ou mais = diária
+PKG_MAX_HOURS     = 8
+PKG_MAX_BLOCKS    = 10
+PKG_OPEN_HOUR     = 6
+PKG_CLOSE_HOUR    = 23
+
+# --- HQ ---
+# Referência do que foi medido em produção (NÃO usado no cálculo: o preço da HQ
+# é sempre lido ao vivo em _hq_quote_block, para sobreviver a mudanças de
+# imposto/tarifa sem alterar código):
+#   taxa obrigatória oculta = $2,00/dia   |   Sales Tax = 6,5%
+#   1h é cobrada por hora; 2h ou mais viram 1 diária
+HQ_PAY_METHOD_LABEL = os.getenv('HQ_OFFLINE_PAY_METHOD', 'Bank Transfer')
+
+
+def _pkg_price_block(hours):
+    """Preço de um bloco: por hora até 5h, diária de 6h em diante."""
+    h = max(1, min(int(hours), PKG_MAX_HOURS))
+    return float(PKG_DAY_RATE) if h >= PKG_DAILY_FROM_H else float(h * PKG_HOURLY_RATE)
+
+
+def _pkg_validate(segments):
+    """Valida e normaliza os blocos. Devolve (lista_normalizada, erro)."""
+    if not isinstance(segments, list) or not segments:
+        return None, 'Informe pelo menos um bloco de serviço.'
+    if len(segments) > PKG_MAX_BLOCKS:
+        return None, f'Máximo de {PKG_MAX_BLOCKS} blocos por pacote.'
+    out = []
+    for s in segments:
+        try:
+            date  = str(s.get('date'))
+            start = str(s.get('start'))
+            hours = int(s.get('hours'))
+        except (AttributeError, TypeError, ValueError):
+            return None, 'Bloco inválido.'
+        try:
+            datetime.strptime(date, '%Y-%m-%d')
+            sh = int(start.split(':')[0])
+        except (ValueError, IndexError):
+            return None, 'Data ou horário inválido.'
+        if not (1 <= hours <= PKG_MAX_HOURS):
+            return None, f'Cada bloco deve ter de 1 a {PKG_MAX_HOURS} horas.'
+        if not (PKG_OPEN_HOUR <= sh <= PKG_CLOSE_HOUR):
+            return None, 'Horário de início fora da janela de atendimento.'
+        if sh + hours > 24:
+            return None, 'O bloco não pode passar da meia-noite.'
+        out.append({'date': date, 'start': f'{sh:02d}:00', 'hours': hours,
+                    'end': f'{sh + hours:02d}:00', 'amount': _pkg_price_block(hours)})
+    # sem sobreposição no mesmo dia
+    by_day = {}
+    for i, s in enumerate(out):
+        for j, other in by_day.get(s['date'], []):
+            a1, a2 = int(s['start'][:2]), int(s['end'][:2])
+            b1, b2 = other
+            if a1 < b2 and b1 < a2:
+                return None, f'Os blocos {j + 1} e {i + 1} se sobrepõem no mesmo dia.'
+        by_day.setdefault(s['date'], []).append((i, (int(s['start'][:2]), int(s['end'][:2]))))
+    return out, None
+
+
+def _pkg_quote(segments):
+    segs, err = _pkg_validate(segments)
+    if err:
+        return None, err
+    total = round(sum(s['amount'] for s in segs), 2)
+    return {'segments': segs, 'total': total, 'tax': 0.0}, None
+
+
+def _hq_quote_block(seg):
+    """Preço que a HQ cobraria pelo bloco, SEM desconto.
+
+    Nada é presumido: a HQ cobra 1h por hora e 2h+ como diária, tem uma taxa
+    obrigatória oculta e aplica imposto por cima. Lemos tudo dela."""
+    params = {
+        'pick_up_date': seg['date'], 'return_date': seg['date'],
+        'pick_up_time': seg['start'], 'return_time': seg['end'],
+        'brand_id': HQ_VANS_BRAND_ID,
+        'pick_up_location': HQ_VANS_LOCATION_ID, 'return_location': HQ_VANS_LOCATION_ID,
+        'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
+    }
+    r = requests.get(f'{HQ_API_BASE}/car-rental/reservations/additional-charges',
+                     headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=25)
+    price = ((r.json().get('data') or {}).get('selected_vehicle_class') or {}).get('price') or {}
+    base = float((price.get('base_price') or {}).get('amount') or 0)
+    with_tax = float((price.get('base_price_with_taxes') or {}).get('amount') or 0)
+    total = float((price.get('total_price_with_mandatory_charges_and_taxes') or {}).get('amount') or 0)
+    if base <= 0 or total <= 0:
+        raise RuntimeError('HQ não devolveu preço para o bloco (van indisponível?)')
+    # multiplicador de imposto lido ao vivo — vira 1.0 sozinho quando a
+    # location isenta entrar no ar, sem precisar mexer no código
+    return total, (with_tax / base if base else 1.0)
+
+
+def _hq_discount_for(hq_total, tax_mult, target_total):
+    """Desconto (pré-imposto) que faz a HQ fechar exatamente no nosso preço."""
+    return round((float(hq_total) - float(target_total)) / (tax_mult or 1.0), 2)
+
+
+def _pkg_ord(email, segs, total):
+    """Identificador determinístico do pedido: mesmo conteúdo = mesmo pedido.
+       Sem nonce do navegador, para que F5 / segunda aba não gerem 2 cobranças."""
+    canon = '|'.join(f"{s['date']}T{s['start']}x{s['hours']}" for s in segs)
+    raw = f"{(email or '').strip().lower()}|{canon}|{int(round(total * 100))}"
+    return 'TR-' + hashlib.sha256(raw.encode()).hexdigest()[:12].upper()
+
+
+def _hq_create_contact(cust, first_date):
+    """Cria (ou recria) o contato na HQ. field_254 é obrigatório lá."""
+    fields = {
+        'contact_entity': 'person',
+        'first_name':   cust.get('first_name', ''),
+        'last_name':    cust.get('last_name', ''),
+        'email':        cust.get('email', ''),
+        'phone_number': cust.get('phone_number', ''),
+        'field_254':    'CHAUFFEUR-SERVICE',
+        'pick_up_date': first_date, 'return_date': first_date,
+        'pick_up_location': HQ_VANS_LOCATION_ID, 'return_location': HQ_VANS_LOCATION_ID,
+        'brand_id': HQ_VANS_BRAND_ID, 'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
+    }
+    boundary = 'HQPkgBoundary1234567890'
+    body = '\r\n'.join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}'
+        for k, v in fields.items() if v
+    ) + f'\r\n--{boundary}--'
+    bb = body.encode('utf-8')
+    conn = http.client.HTTPSConnection(HQ_BASE, timeout=20)
+    conn.request('POST', f'{HQ_PATH}/car-rental/reservations/customer', bb, {
+        'Authorization': HQ_API_TOKEN,
+        'Content-Type': f'multipart/form-data; boundary={boundary}',
+        'Content-Length': str(len(bb)),
+    })
+    data = json.loads(conn.getresponse().read().decode('utf-8')).get('data', {}) or {}
+    return (data.get('customer') or {}).get('id') or (data.get('reservation') or {}).get('customer_id')
+
+
+def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
+    """Cria a reserva de um bloco com o preço exato do pacote. Devolve o id."""
+    hq_total, tax_mult = _hq_quote_block(seg)
+    desconto = _hq_discount_for(hq_total, tax_mult, seg['amount'])
+    params = {
+        'pick_up_date': seg['date'], 'return_date': seg['date'],
+        'pick_up_time': seg['start'], 'return_time': seg['end'],
+        'brand_id': HQ_VANS_BRAND_ID,
+        'pick_up_location': HQ_VANS_LOCATION_ID, 'return_location': HQ_VANS_LOCATION_ID,
+        'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
+        'customer_id': customer_id,
+        'customer_first_name': cust.get('first_name', ''),
+        'customer_last_name':  cust.get('last_name', ''),
+        'customer_email':      cust.get('email', ''),
+        'customer_driver_license_number': 'CHAUFFEUR-SERVICE',
+        'additional_charges[]': '',
+        'manual_discount': str(desconto),
+        'manual_discount_is_percentage': '0',
+        # únicos campos de texto livre que a HQ realmente grava
+        'referral': f'{ord_token}#{index}',
+        'pick_up_location_custom': (pickup_address or '')[:250],
+    }
+    r = requests.post(f'{HQ_API_BASE}/car-rental/reservations/confirm',
+                      headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=25)
+    j = r.json()
+    if not j.get('success'):
+        raise RuntimeError(f"HQ confirm falhou: {json.dumps(j.get('errors'))[:200]}")
+    rsv = (j.get('data') or {}).get('reservation', {}) or {}
+    # confere que a HQ gravou o valor que vamos cobrar — nunca confiar no cálculo
+    gravado = float((rsv.get('total_price') or {}).get('amount') or 0)
+    if abs(gravado - float(seg['amount'])) > 0.02:
+        _hq_cancel(rsv.get('id'))
+        raise RuntimeError(f"preço divergente: HQ gravou {gravado}, esperado {seg['amount']}")
+    return rsv.get('id')
+
+
+def _hq_settle(reservation_id, amount, reference):
+    """Dá baixa REAL do pagamento e CONFERE que o saldo baixou.
+
+    A HQ aceita ids numéricos e devolve 200 sem liquidar nada — por isso
+    usamos os rótulos literais e relemos a reserva para confirmar."""
+    fields = {
+        'field_31': HQ_PAY_METHOD_LABEL,   # método (rótulo literal)
+        'field_32': datetime.now().strftime('%Y-%m-%d'),
+        'field_34': f'{float(amount):.2f}',
+        'field_37': 'Approved',            # status (rótulo literal)
+        'field_29': 'payment',             # pagamento (não autorização)
+        'field_35': (reference or '')[:80],
+    }
+    boundary = 'HQPayBoundary1234567890'
+    body = '\r\n'.join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}'
+        for k, v in fields.items() if v
+    ) + f'\r\n--{boundary}--'
+    bb = body.encode('utf-8')
+    conn = http.client.HTTPSConnection(HQ_BASE, timeout=20)
+    conn.request('POST', f'{HQ_PATH}/car-rental/reservations/{reservation_id}/payments', bb, {
+        'Authorization': HQ_API_TOKEN,
+        'Content-Type': f'multipart/form-data; boundary={boundary}',
+        'Content-Length': str(len(bb)),
+    })
+    conn.getresponse().read()
+    # confere de verdade — o status 200 não é prova de nada
+    chk = requests.get(f'{HQ_API_BASE}/car-rental/reservations/{reservation_id}',
+                       headers={'Authorization': HQ_API_TOKEN}, timeout=20)
+    rsv = (chk.json().get('data') or {}).get('reservation', {}) or {}
+    paid = float(rsv.get('total_paid') or 0)
+    if paid <= 0:
+        print(f'[pkg] ATENÇÃO: reserva {reservation_id} não liquidou (total_paid={paid})')
+    return paid
+
+
+def _hq_cancel(reservation_id):
+    try:
+        requests.post(f'{HQ_API_BASE}/car-rental/reservations/{reservation_id}/cancelled',
+                      headers={'Authorization': HQ_API_TOKEN}, timeout=20)
+    except Exception as e:
+        print(f'[pkg] falha ao cancelar {reservation_id}: {e}')
+
+
+@app.route('/api/transfer/pkg/quote', methods=['POST', 'OPTIONS'])
+def pkg_quote():
+    """Precifica o roteiro. Não cria nada em lugar nenhum."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    data = request.get_json(force=True, silent=True) or {}
+    q, err = _pkg_quote(data.get('segments'))
+    if err:
+        return _json_resp({'ok': False, 'message': err}, 400)
+    return _json_resp({'ok': True, **q}, 200)
+
+
+@app.route('/api/transfer/pkg/checkout', methods=['POST', 'OPTIONS'])
+def pkg_checkout():
+    """Recalcula o preço no servidor e devolve o Checkout do Stripe.
+       capture_method=manual: o cliente autoriza, mas nada é cobrado ainda."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    if not (_stripe and STRIPE_SECRET_KEY):
+        return _json_resp({'ok': False, 'message': 'Pagamento indisponível no momento.'}, 503)
+
+    data = request.get_json(force=True, silent=True) or {}
+    cust = data.get('customer') or {}
+    if not all(cust.get(k) for k in ('first_name', 'last_name', 'email', 'phone_number')):
+        return _json_resp({'ok': False, 'message': 'Preencha nome, e-mail e telefone.'}, 400)
+
+    # o preço vem SEMPRE daqui — o navegador nunca é fonte de verdade
+    q, err = _pkg_quote(data.get('segments'))
+    if err:
+        return _json_resp({'ok': False, 'message': err}, 400)
+
+    segs, total = q['segments'], q['total']
+    ord_token = _pkg_ord(cust['email'], segs, total)
+    _stripe.api_key = STRIPE_SECRET_KEY
+
+    try:
+        # mesmo pedido reaberto (F5, 2ª aba) reaproveita a sessão em vez de cobrar de novo
+        for s in _stripe.checkout.Session.list(limit=100).auto_paging_iter():
+            if s.get('client_reference_id') == ord_token:
+                if s.get('status') == 'open':
+                    return _json_resp({'ok': True, 'ord': ord_token, 'checkout_url': s.get('url')}, 200)
+                if s.get('status') == 'complete':
+                    return _json_resp({'ok': False, 'already': True, 'ord': ord_token,
+                                       'message': 'Este pacote já foi pago.'}, 409)
+                break
+
+        meta = {'v': '1', 'ord': ord_token, 'n': str(len(segs)),
+                'tot': str(int(round(total * 100))),
+                'fn': cust['first_name'][:60], 'ln': cust['last_name'][:60],
+                'em': cust['email'][:80], 'ph': cust['phone_number'][:30],
+                'addr': (data.get('pickup_address') or '')[:200]}
+        for i, s in enumerate(segs):
+            meta[f's{i}'] = f"{s['date']}|{s['start']}|{s['hours']}|{int(round(s['amount'] * 100))}"
+
+        session = _stripe.checkout.Session.create(
+            mode='payment',
+            payment_method_types=['card'],           # captura manual é só cartão
+            client_reference_id=ord_token,
+            customer_email=cust['email'],
+            payment_intent_data={'capture_method': 'manual',
+                                 'metadata': {'v': '1', 'ord': ord_token}},
+            line_items=[{
+                'quantity': 1,
+                'price_data': {
+                    'currency': 'usd',
+                    'unit_amount': int(round(s['amount'] * 100)),
+                    'product_data': {'name': f"Chauffeur — {s['date']} {s['start']}–{s['end']} ({s['hours']}h)"},
+                },
+            } for s in segs],
+            metadata=meta,
+            success_url=f'{TRANSFER_SITE_URL}/confirmation?ord={ord_token}',
+            cancel_url=f'{TRANSFER_SITE_URL}/book?canceled={ord_token}',
+            idempotency_key=f'sess:{ord_token}',
+        )
+        return _json_resp({'ok': True, 'ord': ord_token, 'total': total,
+                           'checkout_url': session.url}, 200)
+    except Exception as e:
+        print(f'[pkg/checkout] erro: {e}')
+        return _json_resp({'ok': False, 'message': 'Não foi possível iniciar o pagamento.'}, 502)
+
+
+def _pkg_fulfil(session):
+    """Cria as reservas, dá baixa e só então captura o dinheiro.
+
+    Idempotente: os ids já criados ficam gravados na metadata do PaymentIntent,
+    então uma reentrega do webhook continua de onde parou."""
+    _stripe.api_key = STRIPE_SECRET_KEY
+    meta = session.get('metadata') or {}
+    ord_token = meta.get('ord')
+    pi_id = session.get('payment_intent')
+    if isinstance(pi_id, dict):
+        pi_id = pi_id.get('id')
+    pi = _stripe.PaymentIntent.retrieve(pi_id)
+    log = dict(pi.get('metadata') or {})
+
+    if log.get('state') in ('captured', 'voided'):
+        print(f'[pkg] {ord_token} já finalizado ({log["state"]})')
+        return
+
+    n = int(meta.get('n') or 0)
+    cust = {'first_name': meta.get('fn', ''), 'last_name': meta.get('ln', ''),
+            'email': meta.get('em', ''), 'phone_number': meta.get('ph', '')}
+    segs = []
+    for i in range(n):
+        raw = meta.get(f's{i}')
+        if not raw:
+            continue
+        d, st, h, cents = raw.split('|')
+        segs.append({'date': d, 'start': st, 'hours': int(h),
+                     'end': f'{int(st[:2]) + int(h):02d}:00', 'amount': int(cents) / 100.0})
+
+    customer_id = log.get('cid')
+    if not customer_id and segs:
+        customer_id = _hq_create_contact(cust, segs[0]['date'])
+        log['cid'] = str(customer_id)
+        _stripe.PaymentIntent.modify(pi_id, metadata=log)
+
+    captured_cents = 0
+    for i, seg in enumerate(segs):
+        if log.get(f'r{i}'):                      # já criado numa entrega anterior
+            captured_cents += int(round(seg['amount'] * 100))
+            continue
+        try:
+            rid = _hq_create_block(seg, cust, customer_id, ord_token, i, meta.get('addr'))
+            log[f'r{i}'] = str(rid)
+            _stripe.PaymentIntent.modify(pi_id, metadata=log)   # grava antes de seguir
+            _hq_settle(rid, seg['amount'], pi_id)
+            captured_cents += int(round(seg['amount'] * 100))
+        except Exception as e:
+            print(f'[pkg] {ord_token} bloco {i} falhou: {e}')
+            log[f'r{i}'] = 'FAIL'
+            _stripe.PaymentIntent.modify(pi_id, metadata=log)
+
+    if captured_cents <= 0:
+        _stripe.PaymentIntent.cancel(pi_id)        # nada criado → libera tudo
+        log['state'] = 'voided'
+        _stripe.PaymentIntent.modify(pi_id, metadata=log)
+        print(f'[pkg] {ord_token}: nenhum bloco criado, autorização liberada')
+        return
+
+    # captura só o que existe de fato; o resto da autorização é liberado
+    _stripe.PaymentIntent.capture(pi_id, amount_to_capture=captured_cents)
+    log['state'] = 'captured'
+    log['cap'] = str(captured_cents)
+    _stripe.PaymentIntent.modify(pi_id, metadata=log)
+    print(f'[pkg] {ord_token}: capturado {captured_cents / 100:.2f} USD')
+
+    falhas = [i for i in range(len(segs)) if log.get(f'r{i}') == 'FAIL']
+    try:
+        requests.post('https://api.resend.com/emails',
+                      headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
+                               'Content-Type': 'application/json'},
+                      json={'from': 'Allycar <booking@allycar.com>',
+                            'to': ['higor@allycar.com', 'david@allycar.com'],
+                            'subject': f'🚐 Pacote transfer {ord_token} — {len(segs) - len(falhas)}/{len(segs)} blocos',
+                            'text': (f'Pedido: {ord_token}\nCliente: {cust["first_name"]} {cust["last_name"]}'
+                                     f' ({cust["email"]} / {cust["phone_number"]})\n'
+                                     f'Capturado: USD {captured_cents / 100:.2f}\nStripe: {pi_id}\n'
+                                     f'Retirada: {meta.get("addr") or "—"}\n\n'
+                                     + '\n'.join(
+                                         f'  {s["date"]} {s["start"]}–{s["end"]} ({s["hours"]}h) '
+                                         f'USD {s["amount"]:.2f} → reserva {log.get(f"r{i}")}'
+                                         for i, s in enumerate(segs))
+                                     + (f'\n\n⚠️ BLOCOS COM FALHA: {falhas} — verificar na HQ' if falhas else ''))},
+                      timeout=10)
+    except Exception as e:
+        print(f'[pkg] e-mail ignorado: {e}')
+
+
+@app.route('/api/transfer/stripe/webhook', methods=['POST'])
+def pkg_stripe_webhook():
+    """Único lugar que escreve na HQ. Sem CORS — quem chama é o Stripe."""
+    if not (_stripe and STRIPE_SECRET_KEY):
+        return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
+    payload = request.get_data()
+    try:
+        if STRIPE_WEBHOOK_SECRET:
+            event = _stripe.Webhook.construct_event(
+                payload, request.headers.get('Stripe-Signature', ''), STRIPE_WEBHOOK_SECRET)
+        else:
+            print('[pkg/webhook] STRIPE_WEBHOOK_SECRET ausente — assinatura NÃO verificada')
+            event = json.loads(payload)
+    except Exception as e:
+        print(f'[pkg/webhook] assinatura inválida: {e}')
+        return app.response_class(response='{"ok":false}', status=400, mimetype='application/json')
+
+    obj = (event.get('data') or {}).get('object') or {}
+    # ignora tudo que não é nosso (a HQ usa a mesma conta Stripe p/ locação)
+    if (obj.get('metadata') or {}).get('v') != '1':
+        return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
+
+    if event.get('type') == 'checkout.session.completed':
+        try:
+            _pkg_fulfil(obj)
+        except Exception as e:
+            print(f'[pkg/webhook] erro ao processar: {e}')
+            # 500 mantém a fila de retentativas do Stripe engajada
+            return app.response_class(response='{"ok":false}', status=500, mimetype='application/json')
     return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
 
 
