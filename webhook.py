@@ -2444,6 +2444,51 @@ def _pkg_fulfil(session):
         print(f'[pkg] e-mail ignorado: {e}')
 
 
+@app.route('/api/transfer/pkg/order/<ord_token>', methods=['GET', 'OPTIONS'])
+def pkg_order(ord_token):
+    """Estado do pedido — e rede de segurança do webhook.
+
+    Se o cliente autorizou mas o webhook não chegou (falha, timeout, endpoint
+    fora do ar), esta rota completa o processo. É idempotente: se já foi
+    processado, só informa o estado. A página de confirmação chama isto."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    if not (_stripe and STRIPE_SECRET_KEY):
+        return _json_resp({'ok': False, 'message': 'indisponível'}, 503)
+    _stripe.api_key = STRIPE_SECRET_KEY
+    try:
+        alvo = None
+        for s in _stripe.checkout.Session.list(limit=100).data:
+            if _sv(s, 'client_reference_id') == ord_token:
+                alvo = s
+                break
+        if alvo is None:
+            return _json_resp({'ok': False, 'message': 'Pedido não encontrado.'}, 404)
+
+        pi_id = _sv(alvo, 'payment_intent')
+        if not isinstance(pi_id, str):
+            pi_id = _sv(pi_id, 'id')
+        estado = 'aguardando pagamento'
+        if pi_id:
+            pi = _stripe.PaymentIntent.retrieve(pi_id)
+            log = _pi_log(pi)
+            situacao = _sv(pi, 'status')
+            # autorizado mas ainda não processado → completa agora
+            if situacao == 'requires_capture' and log.get('state') not in ('captured', 'voided'):
+                _pkg_fulfil(alvo)          # _pkg_fulfil usa _sv, aceita os dois formatos
+                pi = _stripe.PaymentIntent.retrieve(pi_id)
+                log = _pi_log(pi)
+                situacao = _sv(pi, 'status')
+            estado = log.get('state') or situacao
+            reservas = [log[f'r{i}'] for i in range(PKG_MAX_BLOCKS) if log.get(f'r{i}')]
+            return _json_resp({'ok': True, 'ord': ord_token, 'state': estado,
+                               'stripe_status': situacao, 'reservations': reservas}, 200)
+        return _json_resp({'ok': True, 'ord': ord_token, 'state': estado}, 200)
+    except Exception as e:
+        print(f'[pkg/order] erro: {e}')
+        return _json_resp({'ok': False, 'message': str(e)[:200]}, 500)
+
+
 @app.route('/api/transfer/stripe/webhook', methods=['POST'])
 def pkg_stripe_webhook():
     """Único lugar que escreve na HQ. Sem CORS — quem chama é o Stripe."""
