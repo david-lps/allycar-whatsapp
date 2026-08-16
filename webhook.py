@@ -2605,7 +2605,7 @@ def _pkg_fulfil(session):
 
     customer_id = log.get('cid')
     if not customer_id and segs:
-        customer_id = _hq_create_contact(cust, segs[0]['date'])
+        customer_id = _hq_create_contact(cust, segs[0]['start_date'])
         log['cid'] = str(customer_id)
         _stripe.PaymentIntent.modify(pi_id, metadata=log)
 
@@ -2669,7 +2669,7 @@ def _pkg_fulfil(session):
                                      f'Capturado: USD {captured_cents / 100:.2f}\nStripe: {pi_id}\n'
                                      f'Retirada: {meta_addr or "—"}\n\n'
                                      + '\n'.join(
-                                         f'  {s["date"]} {s["start"]}–{s["end"]} ({s["hours"]}h) '
+                                         f'  {_pkg_rotulo(s)} '
                                          f'USD {s["amount"]:.2f} → reserva {log.get(f"r{i}")}'
                                          for i, s in enumerate(segs))
                                      + (f'\n\n⚠️ BLOCOS COM FALHA: {falhas} — verificar na HQ' if falhas else ''))},
