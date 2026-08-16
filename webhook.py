@@ -1987,6 +1987,15 @@ PKG_CLOSE_HOUR    = 23
 HQ_PAY_METHOD_LABEL = os.getenv('HQ_OFFLINE_PAY_METHOD', 'Bank Transfer')
 
 
+def _sv(obj, key, default=None):
+    """Lê um campo tanto de dict quanto de objeto do Stripe (v15 não tem .get)."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _pkg_price_block(hours):
     """Preço de um bloco: por hora até 5h, diária de 6h em diante."""
     h = max(1, min(int(hours), PKG_MAX_HOURS))
@@ -2214,8 +2223,8 @@ def pkg_diag():
         _stripe.api_key = STRIPE_SECRET_KEY
         try:
             acct = _stripe.Account.retrieve()
-            info['account'] = acct.get('id')
-            info['livemode'] = acct.get('charges_enabled')
+            info['account'] = _sv(acct, 'id')
+            info['charges_enabled'] = _sv(acct, 'charges_enabled')
         except Exception as e:
             info['account_error'] = f'{type(e).__name__}: {e}'[:300]
         try:
@@ -2228,9 +2237,10 @@ def pkg_diag():
                 success_url='https://www.allycar.com/transfer/confirmation',
                 cancel_url='https://www.allycar.com/transfer/book',
             )
-            info['session_ok'] = bool(s.get('url'))
+            info['session_ok'] = bool(_sv(s, 'url'))
             try:
-                _stripe.checkout.Session.expire(s.get('id'))
+                _stripe.checkout.Session.expire(_sv(s, 'id'))   # não deixa sessão órfã
+                info['session_expired'] = True
             except Exception:
                 pass
         except Exception as e:
@@ -2263,11 +2273,12 @@ def pkg_checkout():
 
     try:
         # mesmo pedido reaberto (F5, 2ª aba) reaproveita a sessão em vez de cobrar de novo
-        for s in _stripe.checkout.Session.list(limit=100).auto_paging_iter():
-            if s.get('client_reference_id') == ord_token:
-                if s.get('status') == 'open':
-                    return _json_resp({'ok': True, 'ord': ord_token, 'checkout_url': s.get('url')}, 200)
-                if s.get('status') == 'complete':
+        for s in _stripe.checkout.Session.list(limit=100).data:
+            if _sv(s, 'client_reference_id') == ord_token:
+                if _sv(s, 'status') == 'open':
+                    return _json_resp({'ok': True, 'ord': ord_token,
+                                       'checkout_url': _sv(s, 'url')}, 200)
+                if _sv(s, 'status') == 'complete':
                     return _json_resp({'ok': False, 'already': True, 'ord': ord_token,
                                        'message': 'Este pacote já foi pago.'}, 409)
                 break
@@ -2301,7 +2312,7 @@ def pkg_checkout():
             idempotency_key=f'sess:{ord_token}',
         )
         return _json_resp({'ok': True, 'ord': ord_token, 'total': total,
-                           'checkout_url': session.url}, 200)
+                           'checkout_url': _sv(session, 'url')}, 200)
     except Exception as e:
         print(f'[pkg/checkout] erro: {e}')
         return _json_resp({'ok': False, 'message': 'Não foi possível iniciar o pagamento.'}, 502)
@@ -2313,13 +2324,13 @@ def _pkg_fulfil(session):
     Idempotente: os ids já criados ficam gravados na metadata do PaymentIntent,
     então uma reentrega do webhook continua de onde parou."""
     _stripe.api_key = STRIPE_SECRET_KEY
-    meta = session.get('metadata') or {}
+    meta = dict(_sv(session, 'metadata') or {})
     ord_token = meta.get('ord')
-    pi_id = session.get('payment_intent')
-    if isinstance(pi_id, dict):
-        pi_id = pi_id.get('id')
+    pi_id = _sv(session, 'payment_intent')
+    if not isinstance(pi_id, str):
+        pi_id = _sv(pi_id, 'id')
     pi = _stripe.PaymentIntent.retrieve(pi_id)
-    log = dict(pi.get('metadata') or {})
+    log = dict(_sv(pi, 'metadata') or {})
 
     if log.get('state') in ('captured', 'voided'):
         print(f'[pkg] {ord_token} já finalizado ({log["state"]})')
@@ -2412,12 +2423,12 @@ def pkg_stripe_webhook():
         print(f'[pkg/webhook] assinatura inválida: {e}')
         return app.response_class(response='{"ok":false}', status=400, mimetype='application/json')
 
-    obj = (event.get('data') or {}).get('object') or {}
+    obj = _sv(_sv(event, 'data'), 'object') or {}
     # ignora tudo que não é nosso (a HQ usa a mesma conta Stripe p/ locação)
-    if (obj.get('metadata') or {}).get('v') != '1':
+    if (_sv(obj, 'metadata') or {}).get('v') != '1':
         return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
 
-    if event.get('type') == 'checkout.session.completed':
+    if _sv(event, 'type') == 'checkout.session.completed':
         try:
             _pkg_fulfil(obj)
         except Exception as e:
