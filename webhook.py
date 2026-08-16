@@ -2199,6 +2199,45 @@ def pkg_quote():
     return _json_resp({'ok': True, **q}, 200)
 
 
+@app.route('/api/transfer/pkg/_diag', methods=['GET'])
+def pkg_diag():
+    """Diagnóstico da integração Stripe (sem expor segredos)."""
+    info = {
+        'stripe_lib': bool(_stripe),
+        'stripe_version': getattr(_stripe, 'VERSION', None) if _stripe else None,
+        'key_set': bool(STRIPE_SECRET_KEY),
+        'key_prefix': (STRIPE_SECRET_KEY[:7] + '…') if STRIPE_SECRET_KEY else None,
+        'webhook_secret_set': bool(STRIPE_WEBHOOK_SECRET),
+        'site_url': TRANSFER_SITE_URL,
+    }
+    if _stripe and STRIPE_SECRET_KEY:
+        _stripe.api_key = STRIPE_SECRET_KEY
+        try:
+            acct = _stripe.Account.retrieve()
+            info['account'] = acct.get('id')
+            info['livemode'] = acct.get('charges_enabled')
+        except Exception as e:
+            info['account_error'] = f'{type(e).__name__}: {e}'[:300]
+        try:
+            s = _stripe.checkout.Session.create(
+                mode='payment', payment_method_types=['card'],
+                payment_intent_data={'capture_method': 'manual'},
+                line_items=[{'quantity': 1, 'price_data': {
+                    'currency': 'usd', 'unit_amount': 100,
+                    'product_data': {'name': 'diag'}}}],
+                success_url='https://www.allycar.com/transfer/confirmation',
+                cancel_url='https://www.allycar.com/transfer/book',
+            )
+            info['session_ok'] = bool(s.get('url'))
+            try:
+                _stripe.checkout.Session.expire(s.get('id'))
+            except Exception:
+                pass
+        except Exception as e:
+            info['session_error'] = f'{type(e).__name__}: {e}'[:400]
+    return _json_resp(info, 200)
+
+
 @app.route('/api/transfer/pkg/checkout', methods=['POST', 'OPTIONS'])
 def pkg_checkout():
     """Recalcula o preço no servidor e devolve o Checkout do Stripe.
