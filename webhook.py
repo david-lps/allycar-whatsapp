@@ -1965,6 +1965,7 @@ def braza_webhook():
 # =========================================================================
 
 import hashlib
+import urllib.parse
 
 try:
     import stripe as _stripe
@@ -2402,6 +2403,103 @@ def pkg_checkout():
         return _json_resp({'ok': False, 'message': 'Não foi possível iniciar o pagamento.'}, 502)
 
 
+def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
+    """Confirmação para o CLIENTE. Best-effort: falha aqui nunca derruba a reserva."""
+    if not cust.get('email'):
+        return
+    fmt_dia = lambda d: datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %d, %Y')
+    linhas = ''.join(
+        f'''<tr>
+              <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;">
+                <strong style="color:#0E463E;">{fmt_dia(b["date"])}</strong><br>
+                <span style="color:#5b7a72;font-size:13px;">{b["start"]}–{b["end"]} · {b["hours"]}h</span>
+              </td>
+              <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;text-align:right;
+                         white-space:nowrap;color:#0E463E;font-weight:600;">USD {b["amount"]:.2f}</td>
+            </tr>''' for b in blocos)
+
+    html = f"""
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#333333;background-color:#ffffff;
+                max-width:600px;margin:0 auto;padding:8px;">
+      <div style="background-color:#0E463E;padding:24px;text-align:center;border-radius:8px 8px 0 0;">
+        <img src="https://allycar.com/assets/allycar.png" alt="Allycar"
+             style="max-width:170px;display:block;margin:0 auto 10px;">
+        <p style="margin:0;color:#CFE280;font-size:13px;letter-spacing:.08em;text-transform:uppercase;">
+          Private chauffeur service</p>
+      </div>
+
+      <div style="background-color:#ffffff;border:1px solid #e6ece8;border-top:0;
+                  border-radius:0 0 8px 8px;padding:26px;">
+        <h1 style="margin:0 0 6px;color:#0E463E;font-size:22px;">Your ride is confirmed 🚐</h1>
+        <p style="margin:0 0 20px;color:#5b7a72;font-size:15px;">
+          Hi {cust.get('first_name','')}, your private Mercedes-Benz Sprinter and chauffeur are booked.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+          <tr><td colspan="2" style="padding:0 0 8px;color:#5b7a72;font-size:12px;
+                     letter-spacing:.06em;text-transform:uppercase;">Your schedule</td></tr>
+          {linhas}
+          <tr>
+            <td style="padding:12px;color:#0E463E;font-weight:bold;">Total paid</td>
+            <td style="padding:12px;text-align:right;color:#0E463E;font-weight:bold;font-size:18px;">
+              USD {total:.2f}</td>
+          </tr>
+        </table>
+
+        <div style="background:#f4f7f4;border-radius:8px;padding:14px 16px;margin-bottom:18px;">
+          <p style="margin:0 0 4px;color:#5b7a72;font-size:12px;letter-spacing:.06em;
+                    text-transform:uppercase;">Pick-up</p>
+          <p style="margin:0;color:#0E463E;font-weight:600;">{pickup or 'To be confirmed'}</p>
+        </div>
+
+        <p style="margin:0 0 6px;color:#006354;font-weight:bold;font-size:14px;">Included in your ride</p>
+        <p style="margin:0 0 20px;color:#5b7a72;font-size:14px;line-height:1.7;">
+          ✓ Professional chauffeur &nbsp; ✓ Fuel &nbsp; ✓ Tolls<br>
+          ✓ Coolers &nbsp; ✓ Car seats on request &nbsp; ✓ 24/7 support in EN · ES · PT
+        </p>
+        <p style="margin:0 0 20px;color:#8a9a95;font-size:12px;">
+          No sales tax on chauffeur service. Parking is not included.
+        </p>
+
+        <p style="margin:0 0 4px;color:#5b7a72;font-size:13px;">Booking reference</p>
+        <p style="margin:0 0 22px;font-family:monospace;font-size:17px;color:#0E463E;
+                  letter-spacing:1px;font-weight:bold;">{ord_token}</p>
+
+        <div style="text-align:center;">
+          <a href="https://wa.me/16892669911?text={urllib.parse.quote(f'Hi! About my booking {ord_token}:')}"
+             style="display:inline-block;background:#25D366;color:#fff;text-decoration:none;
+                    padding:12px 24px;border-radius:999px;font-weight:bold;font-size:15px;">
+            Talk to us on WhatsApp</a>
+        </div>
+        <p style="margin:16px 0 0;color:#8a9a95;font-size:12px;text-align:center;">
+          Need to change something? Reply to this e-mail or message us — we're here 24/7.
+        </p>
+      </div>
+
+      <div style="background-color:#006354;padding:18px;text-align:center;border-radius:8px;margin-top:14px;">
+        <p style="margin:4px 0;color:#fff;font-size:15px;font-weight:bold;">Allycar Transfer</p>
+        <p style="margin:4px 0;color:#fff;font-size:13px;">Private chauffeur service | Orlando, FL</p>
+        <p style="margin:4px 0;color:#fff;font-size:12px;">📞 +1 (689) 266-9911 | 📧 booking@allycar.com</p>
+        <p style="margin:4px 0;"><a href="https://www.allycar.com/transfer"
+           style="color:#fff;font-size:12px;text-decoration:none;">🌐 allycar.com/transfer</a></p>
+      </div>
+    </div>"""
+
+    try:
+        r = requests.post('https://api.resend.com/emails',
+                          headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
+                                   'Content-Type': 'application/json'},
+                          json={'from': 'Allycar Transfer <booking@allycar.com>',
+                                'reply_to': 'booking@allycar.com',
+                                'to': [cust['email']],
+                                'subject': f'Your chauffeur is confirmed · {ord_token}',
+                                'html': html},
+                          timeout=12)
+        print(f'[pkg] e-mail ao cliente {cust["email"]}: {r.status_code}')
+    except Exception as e:
+        print(f'[pkg] e-mail ao cliente falhou (ignorado): {e}')
+
+
 def _pkg_fulfil(session):
     """Cria as reservas, dá baixa e só então captura o dinheiro.
 
@@ -2421,6 +2519,7 @@ def _pkg_fulfil(session):
         return
 
     n = int(_sv(meta, 'n') or 0)
+    meta_addr = _sv(meta, 'addr', '')
     cust = {'first_name': _sv(meta, 'fn', ''), 'last_name': _sv(meta, 'ln', ''),
             'email': _sv(meta, 'em', ''), 'phone_number': _sv(meta, 'ph', '')}
     segs = []
@@ -2444,7 +2543,7 @@ def _pkg_fulfil(session):
             captured_cents += int(round(seg['amount'] * 100))
             continue
         try:
-            rid = _hq_create_block(seg, cust, customer_id, ord_token, i, meta.get('addr'))
+            rid = _hq_create_block(seg, cust, customer_id, ord_token, i, meta_addr)
             log[f'r{i}'] = str(rid)
             _stripe.PaymentIntent.modify(pi_id, metadata=log)   # grava antes de seguir
             _hq_settle(rid, seg['amount'], pi_id)
@@ -2470,6 +2569,12 @@ def _pkg_fulfil(session):
     print(f'[pkg] {ord_token}: capturado {captured_cents / 100:.2f} USD')
 
     falhas = [i for i in range(len(segs)) if log.get(f'r{i}') == 'FAIL']
+
+    # confirmação para o cliente — só os blocos que existem de fato
+    _pkg_email_cliente(cust, ord_token,
+                       [s for i, s in enumerate(segs) if log.get(f'r{i}') != 'FAIL'],
+                       captured_cents / 100.0, meta_addr)
+
     try:
         requests.post('https://api.resend.com/emails',
                       headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
@@ -2480,7 +2585,7 @@ def _pkg_fulfil(session):
                             'text': (f'Pedido: {ord_token}\nCliente: {cust["first_name"]} {cust["last_name"]}'
                                      f' ({cust["email"]} / {cust["phone_number"]})\n'
                                      f'Capturado: USD {captured_cents / 100:.2f}\nStripe: {pi_id}\n'
-                                     f'Retirada: {meta.get("addr") or "—"}\n\n'
+                                     f'Retirada: {meta_addr or "—"}\n\n'
                                      + '\n'.join(
                                          f'  {s["date"]} {s["start"]}–{s["end"]} ({s["hours"]}h) '
                                          f'USD {s["amount"]:.2f} → reserva {log.get(f"r{i}")}'
