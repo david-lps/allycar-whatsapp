@@ -1321,14 +1321,17 @@ TRANSFER_ALLOWED_ORIGINS = {
     "https://www.allycar.com",
     "https://allycar.com",
     "http://localhost:4321",
+    "http://localhost:4322",
     "http://localhost:4323",
+    "http://localhost:4324",
+    "http://localhost:4325",
 }
 
 def _cors_transfer(response):
     origin = request.headers.get("Origin", "")
     response.headers["Access-Control-Allow-Origin"] = origin if origin in TRANSFER_ALLOWED_ORIGINS else ALLOWED_ORIGIN
     response.headers["Vary"] = "Origin"
-    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
