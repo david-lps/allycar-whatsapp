@@ -1965,6 +1965,7 @@ def braza_webhook():
 # =========================================================================
 
 import hashlib
+import math
 import urllib.parse
 
 try:
@@ -1977,13 +1978,12 @@ STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 TRANSFER_SITE_URL     = os.getenv('TRANSFER_SITE_URL', 'https://www.allycar.com/transfer')
 
 # --- Regra de preço (espelha src/lib/pricing.ts do site) ---
-PKG_HOURLY_RATE   = 250
-PKG_DAY_RATE      = 1500
-PKG_DAILY_FROM_H  = 6      # 6h ou mais = diária
-PKG_MAX_HOURS     = 8
-PKG_MAX_BLOCKS    = 10
-PKG_OPEN_HOUR     = 6
-PKG_CLOSE_HOUR    = 23
+PKG_HOURLY_RATE           = 250
+PKG_DAY_RATE              = 1500
+PKG_MAX_BLOCKS            = 10
+PKG_MAX_HORAS_INTERVALO   = 30 * 24     # teto de sanidade: 30 dias por intervalo
+PKG_OPEN_HOUR             = 6
+PKG_CLOSE_HOUR            = 23
 
 # --- HQ ---
 # Referência do que foi medido em produção (NÃO usado no cálculo: o preço da HQ
@@ -2025,49 +2025,80 @@ def _pi_log(pi):
     return out
 
 
-def _pkg_price_block(hours):
-    """Preço de um bloco: por hora até 5h, diária de 6h em diante."""
-    h = max(1, min(int(hours), PKG_MAX_HOURS))
-    return float(PKG_DAY_RATE) if h >= PKG_DAILY_FROM_H else float(h * PKG_HOURLY_RATE)
+def _pkg_price_interval(total_horas):
+    """Preço de um intervalo: dias inteiros na diária + resto por hora (com teto
+    de uma diária). Espelha src/lib/pricing.ts do site.
+        26h -> 1 dia + 2h = 1500 + 500 = 1750
+         8h -> 0 dias + 8h = min(8*250, 1500) = 1500
+        48h -> 2 dias = 3000"""
+    h = max(0, int(total_horas))
+    dias, resto = divmod(h, 24)
+    valor = dias * PKG_DAY_RATE
+    if resto:
+        valor += min(resto * PKG_HOURLY_RATE, PKG_DAY_RATE)
+    return float(valor), dias, resto
 
 
 def _pkg_validate(segments):
-    """Valida e normaliza os blocos. Devolve (lista_normalizada, erro)."""
+    """Valida e normaliza os intervalos. Devolve (lista_normalizada, erro)."""
     if not isinstance(segments, list) or not segments:
-        return None, 'Informe pelo menos um bloco de serviço.'
+        return None, 'Informe pelo menos um intervalo.'
     if len(segments) > PKG_MAX_BLOCKS:
-        return None, f'Máximo de {PKG_MAX_BLOCKS} blocos por pacote.'
+        return None, f'Máximo de {PKG_MAX_BLOCKS} intervalos por pacote.'
     out = []
     for s in segments:
+        if not isinstance(s, dict):
+            return None, 'Intervalo inválido.'
         try:
-            date  = str(s.get('date'))
-            start = str(s.get('start'))
-            hours = int(s.get('hours'))
-        except (AttributeError, TypeError, ValueError):
-            return None, 'Bloco inválido.'
-        try:
-            datetime.strptime(date, '%Y-%m-%d')
-            sh = int(start.split(':')[0])
-        except (ValueError, IndexError):
+            ini = datetime.strptime(f"{s.get('start_date')} {s.get('start_time')}", '%Y-%m-%d %H:%M')
+            fim = datetime.strptime(f"{s.get('end_date')} {s.get('end_time')}", '%Y-%m-%d %H:%M')
+        except (ValueError, TypeError):
             return None, 'Data ou horário inválido.'
-        if not (1 <= hours <= PKG_MAX_HOURS):
-            return None, f'Cada bloco deve ter de 1 a {PKG_MAX_HOURS} horas.'
-        if not (PKG_OPEN_HOUR <= sh <= PKG_CLOSE_HOUR):
-            return None, 'Horário de início fora da janela de atendimento.'
-        if sh + hours > 24:
-            return None, 'O bloco não pode passar da meia-noite.'
-        out.append({'date': date, 'start': f'{sh:02d}:00', 'hours': hours,
-                    'end': f'{sh + hours:02d}:00', 'amount': _pkg_price_block(hours)})
-    # sem sobreposição no mesmo dia
-    by_day = {}
-    for i, s in enumerate(out):
-        for j, other in by_day.get(s['date'], []):
-            a1, a2 = int(s['start'][:2]), int(s['end'][:2])
-            b1, b2 = other
-            if a1 < b2 and b1 < a2:
-                return None, f'Os blocos {j + 1} e {i + 1} se sobrepõem no mesmo dia.'
-        by_day.setdefault(s['date'], []).append((i, (int(s['start'][:2]), int(s['end'][:2]))))
+        if fim <= ini:
+            return None, 'O fim do intervalo precisa ser depois do início.'
+        for hora, rotulo in ((ini.hour, 'início'), (fim.hour, 'fim')):
+            if not (PKG_OPEN_HOUR <= hora <= PKG_CLOSE_HOUR):
+                return None, f'Horário de {rotulo} fora da janela de atendimento.'
+        horas = int(math.ceil((fim - ini).total_seconds() / 3600))
+        if horas > PKG_MAX_HORAS_INTERVALO:
+            return None, f'Cada intervalo pode ter no máximo {PKG_MAX_HORAS_INTERVALO // 24} dias.'
+        valor, dias, resto = _pkg_price_interval(horas)
+        out.append({'start_date': s['start_date'], 'start_time': f'{ini.hour:02d}:00',
+                    'end_date': s['end_date'], 'end_time': f'{fim.hour:02d}:00',
+                    'hours': horas, 'days': dias, 'rest_hours': resto,
+                    'amount': valor, '_ini': ini, '_fim': fim})
+    # sem sobreposição entre intervalos
+    ordenados = sorted(range(len(out)), key=lambda i: out[i]['_ini'])
+    for k in range(1, len(ordenados)):
+        ant, cur = out[ordenados[k - 1]], out[ordenados[k]]
+        if cur['_ini'] < ant['_fim']:
+            a, b = sorted((ordenados[k - 1], ordenados[k]))
+            return None, f'Os intervalos {a + 1} e {b + 1} se sobrepõem.'
+    for s in out:
+        s.pop('_ini', None); s.pop('_fim', None)
     return out, None
+
+
+def _pkg_duracao(seg):
+    """'2 days 3h', '4h' — como a duração é apresentada ao cliente."""
+    horas = int(seg.get('hours') or 0)
+    dias, resto = divmod(horas, 24)
+    partes = []
+    if dias:
+        partes.append(f"{dias} day{'s' if dias > 1 else ''}")
+    if resto:
+        partes.append(f'{resto}h')
+    return ' '.join(partes) or '—'
+
+
+def _pkg_rotulo(seg):
+    """Nome do item no Stripe / no recibo do cliente."""
+    if seg['start_date'] == seg['end_date']:
+        quando = f"{seg['start_date']} {seg['start_time']}–{seg['end_time']}"
+    else:
+        quando = (f"{seg['start_date']} {seg['start_time']} → "
+                  f"{seg['end_date']} {seg['end_time']}")
+    return f'Chauffeur — {quando} ({_pkg_duracao(seg)})'
 
 
 def _pkg_quote(segments):
@@ -2084,8 +2115,8 @@ def _hq_quote_block(seg):
     Nada é presumido: a HQ cobra 1h por hora e 2h+ como diária, tem uma taxa
     obrigatória oculta e aplica imposto por cima. Lemos tudo dela."""
     params = {
-        'pick_up_date': seg['date'], 'return_date': seg['date'],
-        'pick_up_time': seg['start'], 'return_time': seg['end'],
+        'pick_up_date': seg['start_date'], 'return_date': seg['end_date'],
+        'pick_up_time': seg['start_time'], 'return_time': seg['end_time'],
         'brand_id': HQ_VANS_BRAND_ID,
         'pick_up_location': HQ_VANS_LOCATION_ID, 'return_location': HQ_VANS_LOCATION_ID,
         'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
@@ -2111,7 +2142,8 @@ def _hq_discount_for(hq_total, tax_mult, target_total):
 def _pkg_ord(email, segs, total):
     """Identificador determinístico do pedido: mesmo conteúdo = mesmo pedido.
        Sem nonce do navegador, para que F5 / segunda aba não gerem 2 cobranças."""
-    canon = '|'.join(f"{s['date']}T{s['start']}x{s['hours']}" for s in segs)
+    canon = '|'.join(
+        f"{s['start_date']}T{s['start_time']}>{s['end_date']}T{s['end_time']}" for s in segs)
     raw = f"{(email or '').strip().lower()}|{canon}|{int(round(total * 100))}"
     return 'TR-' + hashlib.sha256(raw.encode()).hexdigest()[:12].upper()
 
@@ -2150,8 +2182,8 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
     hq_total, tax_mult = _hq_quote_block(seg)
     desconto = _hq_discount_for(hq_total, tax_mult, seg['amount'])
     params = {
-        'pick_up_date': seg['date'], 'return_date': seg['date'],
-        'pick_up_time': seg['start'], 'return_time': seg['end'],
+        'pick_up_date': seg['start_date'], 'return_date': seg['end_date'],
+        'pick_up_time': seg['start_time'], 'return_time': seg['end_time'],
         'brand_id': HQ_VANS_BRAND_ID,
         'pick_up_location': HQ_VANS_LOCATION_ID, 'return_location': HQ_VANS_LOCATION_ID,
         'vehicle_class_id': HQ_VANS_VEHICLE_CLASS_ID,
@@ -2170,8 +2202,9 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
         # reserva é sempre a isenta ("For chauffeur"), então o ponto real de
         # retirada precisa estar visível aqui.
         'comments': (f'TRANSFER · Retirada: {pickup_address or "a combinar"} · '
-                     f'{seg["start"]}–{seg["end"]} ({seg["hours"]}h) · '
-                     f'USD {seg["amount"]:.2f} · pedido {ord_token} bloco {index + 1}')[:500],
+                     f'{seg["start_date"]} {seg["start_time"]} → {seg["end_date"]} {seg["end_time"]} '
+                     f'({seg["hours"]}h) · USD {seg["amount"]:.2f} · '
+                     f'pedido {ord_token} intervalo {index + 1}')[:500],
     }
     r = requests.post(f'{HQ_API_BASE}/car-rental/reservations/confirm',
                       headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=25)
@@ -2401,7 +2434,9 @@ def pkg_checkout():
                 'em': cust['email'][:80], 'ph': cust['phone_number'][:30],
                 'addr': (data.get('pickup_address') or '')[:200]}
         for i, s in enumerate(segs):
-            meta[f's{i}'] = f"{s['date']}|{s['start']}|{s['hours']}|{int(round(s['amount'] * 100))}"
+            meta[f's{i}'] = (f"{s['start_date']}|{s['start_time']}|"
+                             f"{s['end_date']}|{s['end_time']}|"
+                             f"{int(round(s['amount'] * 100))}")
 
         session = _stripe.checkout.Session.create(
             mode='payment',
@@ -2415,7 +2450,7 @@ def pkg_checkout():
                 'price_data': {
                     'currency': 'usd',
                     'unit_amount': int(round(s['amount'] * 100)),
-                    'product_data': {'name': f"Chauffeur — {s['date']} {s['start']}–{s['end']} ({s['hours']}h)"},
+                    'product_data': {'name': _pkg_rotulo(s)},
                 },
             } for s in segs],
             metadata=meta,
@@ -2439,8 +2474,12 @@ def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
     linhas = ''.join(
         f'''<tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;">
-                <strong style="color:#0E463E;">{fmt_dia(b["date"])}</strong><br>
-                <span style="color:#5b7a72;font-size:13px;">{b["start"]}–{b["end"]} · {b["hours"]}h</span>
+                <strong style="color:#0E463E;">{fmt_dia(b["start_date"])}</strong><br>
+                <span style="color:#5b7a72;font-size:13px;">{
+                    f'{b["start_time"]}–{b["end_time"]}'
+                    if b["start_date"] == b["end_date"] else
+                    f'{b["start_time"]} → {fmt_dia(b["end_date"])} {b["end_time"]}'
+                } · {_pkg_duracao(b)}</span>
               </td>
               <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;text-align:right;
                          white-space:nowrap;color:#0E463E;font-weight:600;">USD {b["amount"]:.2f}</td>
@@ -2557,9 +2596,12 @@ def _pkg_fulfil(session):
         raw = _sv(meta, f's{i}')
         if not raw:
             continue
-        d, st, h, cents = raw.split('|')
-        segs.append({'date': d, 'start': st, 'hours': int(h),
-                     'end': f'{int(st[:2]) + int(h):02d}:00', 'amount': int(cents) / 100.0})
+        sd, stt, ed, et, cents = raw.split('|')
+        ini = datetime.strptime(f'{sd} {stt}', '%Y-%m-%d %H:%M')
+        fim = datetime.strptime(f'{ed} {et}', '%Y-%m-%d %H:%M')
+        horas = int(math.ceil((fim - ini).total_seconds() / 3600))
+        segs.append({'start_date': sd, 'start_time': stt, 'end_date': ed, 'end_time': et,
+                     'hours': horas, 'amount': int(cents) / 100.0})
 
     customer_id = log.get('cid')
     if not customer_id and segs:
