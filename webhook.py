@@ -2165,6 +2165,12 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
         # únicos campos de texto livre que a HQ realmente grava
         'referral': f'{ord_token}#{index}',
         'pick_up_location_custom': (pickup_address or '')[:250],
+        # comentário: é o que a equipe vê de imediato na reserva. A location da
+        # reserva é sempre a isenta ("For chauffeur"), então o ponto real de
+        # retirada precisa estar visível aqui.
+        'comments': (f'TRANSFER · Retirada: {pickup_address or "a combinar"} · '
+                     f'{seg["start"]}–{seg["end"]} ({seg["hours"]}h) · '
+                     f'USD {seg["amount"]:.2f} · pedido {ord_token} bloco {index + 1}')[:500],
     }
     r = requests.post(f'{HQ_API_BASE}/car-rental/reservations/confirm',
                       headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=25)
