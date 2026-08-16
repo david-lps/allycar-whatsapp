@@ -2232,6 +2232,10 @@ def pkg_quote():
 def pkg_diag():
     """Diagnóstico da integração Stripe (sem expor segredos)."""
     info = {
+        'hq_vans_class': HQ_VANS_VEHICLE_CLASS_ID,
+        'hq_vans_brand': HQ_VANS_BRAND_ID,
+        'hq_vans_location': HQ_VANS_LOCATION_ID,
+        'hq_pay_method_label': HQ_PAY_METHOD_LABEL,
         'stripe_lib': bool(_stripe),
         'stripe_version': getattr(_stripe, 'VERSION', None) if _stripe else None,
         'key_set': bool(STRIPE_SECRET_KEY),
