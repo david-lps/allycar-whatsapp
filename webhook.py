@@ -2015,7 +2015,7 @@ def _pi_log(pi):
     if isinstance(m, dict):
         return dict(m)
     out = {}
-    chaves = (['v', 'ord', 'state', 'cid', 'cap']
+    chaves = (['v', 'ord', 'state', 'cid', 'cap', 'mail']
               + [f'r{i}' for i in range(PKG_MAX_BLOCKS)]
               + [f'e{i}' for i in range(PKG_MAX_BLOCKS)])
     for k in chaves:
@@ -2431,9 +2431,10 @@ def pkg_checkout():
 
 
 def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
-    """Confirmação para o CLIENTE. Best-effort: falha aqui nunca derruba a reserva."""
+    """Confirmação para o CLIENTE. Best-effort: falha aqui nunca derruba a reserva.
+    Devolve um texto curto com o resultado, gravado na metadata para diagnóstico."""
     if not cust.get('email'):
-        return
+        return 'sem email'
     fmt_dia = lambda d: datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %d, %Y')
     linhas = ''.join(
         f'''<tr>
@@ -2522,9 +2523,11 @@ def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
                                 'subject': f'Your chauffeur is confirmed · {ord_token}',
                                 'html': html},
                           timeout=12)
-        print(f'[pkg] e-mail ao cliente {cust["email"]}: {r.status_code}')
+        print(f'[pkg] e-mail ao cliente {cust["email"]}: {r.status_code} {r.text[:200]}')
+        return f'{r.status_code}:{r.text[:120]}'
     except Exception as e:
         print(f'[pkg] e-mail ao cliente falhou (ignorado): {e}')
+        return f'ERRO {type(e).__name__}: {e}'[:160]
 
 
 def _pkg_fulfil(session):
@@ -2598,9 +2601,19 @@ def _pkg_fulfil(session):
     falhas = [i for i in range(len(segs)) if log.get(f'r{i}') == 'FAIL']
 
     # confirmação para o cliente — só os blocos que existem de fato
-    _pkg_email_cliente(cust, ord_token,
-                       [s for i, s in enumerate(segs) if log.get(f'r{i}') != 'FAIL'],
-                       captured_cents / 100.0, meta_addr)
+    try:
+        res_mail = _pkg_email_cliente(
+            cust, ord_token,
+            [s for i, s in enumerate(segs) if log.get(f'r{i}') != 'FAIL'],
+            captured_cents / 100.0, meta_addr)
+    except Exception as e:
+        res_mail = f'EXCEÇÃO {type(e).__name__}: {e}'[:160]
+        print(f'[pkg] e-mail cliente estourou: {e}')
+    log['mail'] = str(res_mail)[:200]
+    try:
+        _stripe.PaymentIntent.modify(pi_id, metadata=log)
+    except Exception:
+        pass
 
     try:
         requests.post('https://api.resend.com/emails',
@@ -2663,7 +2676,7 @@ def pkg_order(ord_token):
             erros = [log[f'e{i}'] for i in range(PKG_MAX_BLOCKS) if log.get(f'e{i}')]
             return _json_resp({'ok': True, 'ord': ord_token, 'state': estado,
                                'stripe_status': situacao, 'reservations': reservas,
-                               'errors': erros}, 200)
+                               'email': log.get('mail'), 'errors': erros}, 200)
         return _json_resp({'ok': True, 'ord': ord_token, 'state': estado}, 200)
     except Exception as e:
         print(f'[pkg/order] erro: {e}')
