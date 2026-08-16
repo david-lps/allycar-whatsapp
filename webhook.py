@@ -2265,6 +2265,24 @@ def pkg_diag():
                 pass
         except Exception as e:
             info['session_error'] = f'{type(e).__name__}: {e}'[:400]
+        # endpoints de webhook configurados na conta
+        try:
+            eps = []
+            for ep in _stripe.WebhookEndpoint.list(limit=10).data:
+                eps.append({'url': _sv(ep, 'url'), 'status': _sv(ep, 'status'),
+                            'events': list(_sv(ep, 'enabled_events') or [])[:6]})
+            info['webhook_endpoints'] = eps
+        except Exception as e:
+            info['endpoints_error'] = f'{type(e).__name__}: {e}'[:200]
+        # últimos eventos de checkout e se foram entregues
+        try:
+            evs = []
+            for ev in _stripe.Event.list(limit=5, type='checkout.session.completed').data:
+                evs.append({'id': _sv(ev, 'id'), 'created': _sv(ev, 'created'),
+                            'pending_webhooks': _sv(ev, 'pending_webhooks')})
+            info['recent_checkout_events'] = evs
+        except Exception as e:
+            info['events_error'] = f'{type(e).__name__}: {e}'[:200]
     return _json_resp(info, 200)
 
 
