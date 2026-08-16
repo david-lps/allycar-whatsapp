@@ -2274,7 +2274,34 @@ def pkg_quote():
 @app.route('/api/transfer/pkg/_diag', methods=['GET'])
 def pkg_diag():
     """Diagnóstico da integração Stripe (sem expor segredos)."""
+    # ?test_email=<addr> tenta um envio real e devolve a resposta do Resend.
+    # Restrito a endereços conhecidos para não virar relay aberto.
+    destino = (request.args.get('test_email') or '').strip().lower()
+    if destino:
+        permitido = destino.endswith('@allycar.com') or destino == 'davidlps1@gmail.com'
+        if not permitido:
+            return _json_resp({'ok': False, 'message': 'endereço não permitido'}, 403)
+        chave = os.getenv('RESEND_API_KEY') or ''
+        try:
+            r = requests.post('https://api.resend.com/emails',
+                              headers={'Authorization': f'Bearer {chave}',
+                                       'Content-Type': 'application/json'},
+                              json={'from': 'Allycar Transfer <booking@allycar.com>',
+                                    'to': [destino],
+                                    'subject': 'Allycar — teste de envio',
+                                    'html': '<p>Teste de envio do Allycar Transfer. '
+                                            'Se você recebeu isto, o Resend está funcionando.</p>'},
+                              timeout=15)
+            return _json_resp({'ok': r.status_code in (200, 201),
+                               'resend_key_set': bool(chave),
+                               'resend_key_prefix': (chave[:6] + '…') if chave else None,
+                               'status': r.status_code,
+                               'resposta': r.text[:500]}, 200)
+        except Exception as e:
+            return _json_resp({'ok': False, 'erro': f'{type(e).__name__}: {e}'[:300]}, 502)
+
     info = {
+        'resend_key_set': bool(os.getenv('RESEND_API_KEY')),
         'hq_vans_class': HQ_VANS_VEHICLE_CLASS_ID,
         'hq_vans_brand': HQ_VANS_BRAND_ID,
         'hq_vans_location': HQ_VANS_LOCATION_ID,
