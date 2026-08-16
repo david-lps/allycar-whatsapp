@@ -2008,7 +2008,9 @@ def _pi_log(pi):
     if isinstance(m, dict):
         return dict(m)
     out = {}
-    chaves = ['v', 'ord', 'state', 'cid', 'cap'] + [f'r{i}' for i in range(PKG_MAX_BLOCKS)]
+    chaves = (['v', 'ord', 'state', 'cid', 'cap']
+              + [f'r{i}' for i in range(PKG_MAX_BLOCKS)]
+              + [f'e{i}' for i in range(PKG_MAX_BLOCKS)])
     for k in chaves:
         val = _sv(m, k)
         if val is not None:
@@ -2408,8 +2410,9 @@ def _pkg_fulfil(session):
             _hq_settle(rid, seg['amount'], pi_id)
             captured_cents += int(round(seg['amount'] * 100))
         except Exception as e:
-            print(f'[pkg] {ord_token} bloco {i} falhou: {e}')
+            print(f'[pkg] {ord_token} bloco {i} falhou: {type(e).__name__}: {e}')
             log[f'r{i}'] = 'FAIL'
+            log[f'e{i}'] = f'{type(e).__name__}: {e}'[:480]   # visível no /pkg/order
             _stripe.PaymentIntent.modify(pi_id, metadata=log)
 
     if captured_cents <= 0:
@@ -2485,8 +2488,10 @@ def pkg_order(ord_token):
                 situacao = _sv(pi, 'status')
             estado = log.get('state') or situacao
             reservas = [log[f'r{i}'] for i in range(PKG_MAX_BLOCKS) if log.get(f'r{i}')]
+            erros = [log[f'e{i}'] for i in range(PKG_MAX_BLOCKS) if log.get(f'e{i}')]
             return _json_resp({'ok': True, 'ord': ord_token, 'state': estado,
-                               'stripe_status': situacao, 'reservations': reservas}, 200)
+                               'stripe_status': situacao, 'reservations': reservas,
+                               'errors': erros}, 200)
         return _json_resp({'ok': True, 'ord': ord_token, 'state': estado}, 200)
     except Exception as e:
         print(f'[pkg/order] erro: {e}')
