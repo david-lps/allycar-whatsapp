@@ -17,6 +17,7 @@ import braza
 # e imports locais dentro de algumas funções — e um `import json` dentro de uma função
 # torna o nome LOCAL na função inteira, quebrando usos anteriores (UnboundLocalError).
 import json   # integração BrazaBank Checkout v2 (PIX + cartão)
+from html import escape as html_escape   # endereço é texto do cliente e vai p/ e-mail HTML
 
 load_dotenv()
 
@@ -1978,6 +1979,16 @@ STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 TRANSFER_SITE_URL     = os.getenv('TRANSFER_SITE_URL', 'https://www.allycar.com/transfer')
 
 # --- Regra de preço (espelha src/lib/pricing.ts do site) ---
+PKG_MAX_ADDR              = 180         # cabe no metadata do Stripe com folga
+# Mapas — UMA chave só, que nunca sai daqui. Tanto o autocomplete quanto a
+# rota passam por endpoints nossos, então o navegador nunca vê a chave e não
+# há como alguém queimar a cota da conta.
+GOOGLE_MAPS_API_KEY       = os.getenv('GOOGLE_MAPS_API_KEY', '')
+# Centro de Orlando e o raio que atendemos — usado para restringir o
+# autocomplete e para recusar rota fora da área.
+ORLANDO_LAT, ORLANDO_LNG  = 28.5383, -81.3792
+SERVICE_RADIUS_MILES      = 30
+
 PKG_HOURLY_RATE           = 250
 PKG_DAY_RATE              = 1500
 PKG_MAX_BLOCKS            = 10
@@ -2063,10 +2074,16 @@ def _pkg_validate(segments):
         if horas > PKG_MAX_HORAS_INTERVALO:
             return None, f'Cada intervalo pode ter no máximo {PKG_MAX_HORAS_INTERVALO // 24} dias.'
         valor, dias, resto = _pkg_price_interval(horas)
+        # Endereços são informativos: guiam o motorista e alimentam a estimativa
+        # de trajeto na tela. NÃO entram no preço — quem define o valor continua
+        # sendo o par de horários que o cliente escolheu.
         out.append({'start_date': s['start_date'], 'start_time': f'{ini.hour:02d}:00',
                     'end_date': s['end_date'], 'end_time': f'{fim.hour:02d}:00',
                     'hours': horas, 'days': dias, 'rest_hours': resto,
-                    'amount': valor, '_ini': ini, '_fim': fim})
+                    'amount': valor,
+                    'pickup': str(s.get('pickup') or '').strip()[:PKG_MAX_ADDR],
+                    'dropoff': str(s.get('dropoff') or '').strip()[:PKG_MAX_ADDR],
+                    '_ini': ini, '_fim': fim})
     # sem sobreposição entre intervalos
     ordenados = sorted(range(len(out)), key=lambda i: out[i]['_ini'])
     for k in range(1, len(ordenados)):
@@ -2205,9 +2222,10 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
         'referral': f'{ord_token}#{index}',
         'pick_up_location_custom': (pickup_address or '')[:250],
         # comentário: é o que a equipe vê de imediato na reserva. A location da
-        # reserva é sempre a isenta ("For chauffeur"), então o ponto real de
-        # retirada precisa estar visível aqui.
-        'comments': (f'TRANSFER · Retirada: {pickup_address or "A COMBINAR com o cliente"} · '
+        # reserva é sempre a isenta ("For chauffeur"), então os pontos reais de
+        # retirada e destino precisam estar visíveis aqui.
+        'comments': (f'TRANSFER · Retirada: {pickup_address or "A COMBINAR com o cliente"}'
+                     f' · Destino: {seg.get("dropoff") or "A COMBINAR com o cliente"} · '
                      f'{seg["start_date"]} {seg["start_time"]} → {seg["end_date"]} {seg["end_time"]} '
                      f'({seg["hours"]}h) · USD {seg["amount"]:.2f} · '
                      f'pedido {ord_token} intervalo {index + 1}')[:500],
@@ -2399,6 +2417,112 @@ def pkg_diag():
     return _json_resp(info, 200)
 
 
+@app.route('/api/transfer/pkg/places', methods=['POST', 'OPTIONS'])
+def pkg_places():
+    """Autocomplete de endereço, restrito a Orlando num raio de 30 milhas.
+
+    Passa por aqui em vez de carregar o SDK do Google no navegador: a chave não
+    fica exposta, a página não baixa o SDK inteiro e a lista de sugestões pode
+    ser desenhada no visual do site."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    if not GOOGLE_MAPS_API_KEY:
+        return _json_resp({'ok': False, 'reason': 'no_key', 'suggestions': []}, 200)
+
+    d = request.get_json(force=True, silent=True) or {}
+    termo = (d.get('input') or '').strip()[:120]
+    if len(termo) < 3:                       # abaixo disso a sugestão é ruído
+        return _json_resp({'ok': True, 'suggestions': []}, 200)
+
+    corpo = {
+        'input': termo,
+        'includedRegionCodes': ['us'],
+        'locationRestriction': {
+            'circle': {'center': {'latitude': ORLANDO_LAT, 'longitude': ORLANDO_LNG},
+                       'radius': SERVICE_RADIUS_MILES * 1609.344},
+        },
+    }
+    # o token de sessão agrupa as teclas digitadas numa cobrança só
+    if d.get('session'):
+        corpo['sessionToken'] = str(d['session'])[:64]
+
+    try:
+        r = requests.post('https://places.googleapis.com/v1/places:autocomplete',
+                          json=corpo,
+                          headers={'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+                                   'Content-Type': 'application/json'},
+                          timeout=10)
+        if r.status_code != 200:
+            print(f'[pkg/places] google {r.status_code}: {r.text[:180]}')
+            return _json_resp({'ok': False, 'reason': 'upstream', 'suggestions': []}, 200)
+        saida = []
+        for s in (r.json() or {}).get('suggestions', [])[:6]:
+            p = s.get('placePrediction') or {}
+            fmt = p.get('structuredFormat') or {}
+            saida.append({
+                'place_id': p.get('placeId'),
+                'text': ((p.get('text') or {}).get('text')) or '',
+                'main': ((fmt.get('mainText') or {}).get('text')) or '',
+                'secondary': ((fmt.get('secondaryText') or {}).get('text')) or '',
+            })
+        return _json_resp({'ok': True, 'suggestions': saida}, 200)
+    except Exception as e:
+        print(f'[pkg/places] erro: {type(e).__name__}: {e}')
+        return _json_resp({'ok': False, 'reason': 'error', 'suggestions': []}, 200)
+
+
+@app.route('/api/transfer/pkg/route', methods=['POST', 'OPTIONS'])
+def pkg_route():
+    """Estimativa de trajeto entre dois pontos, para o aviso na tela.
+
+    É só informativo — não entra no preço. Passa pelo servidor para a chave de
+    rotas não ficar exposta (é ela que gera custo se alguém abusar)."""
+    if request.method == 'OPTIONS':
+        return _cors_transfer(app.make_default_options_response())
+    if not GOOGLE_MAPS_API_KEY:
+        return _json_resp({'ok': False, 'reason': 'no_key'}, 200)
+
+    d = request.get_json(force=True, silent=True) or {}
+
+    def ponto(prefixo):
+        pid = (d.get(f'{prefixo}_place_id') or '').strip()
+        if pid:
+            return {'placeId': pid}
+        txt = (d.get(prefixo) or '').strip()[:PKG_MAX_ADDR]
+        return {'address': txt} if txt else None
+
+    origem, destino = ponto('origin'), ponto('destination')
+    if not origem or not destino:
+        return _json_resp({'ok': False, 'reason': 'incomplete'}, 200)
+
+    try:
+        r = requests.post(
+            'https://routes.googleapis.com/directions/v2:computeRoutes',
+            json={'origin': origem, 'destination': destino,
+                  'travelMode': 'DRIVE', 'routingPreference': 'TRAFFIC_AWARE',
+                  'units': 'IMPERIAL'},
+            headers={'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+                     'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters',
+                     'Content-Type': 'application/json'},
+            timeout=12)
+        if r.status_code != 200:
+            print(f'[pkg/route] google {r.status_code}: {r.text[:180]}')
+            return _json_resp({'ok': False, 'reason': 'upstream'}, 200)
+        rotas = (r.json() or {}).get('routes') or []
+        if not rotas:
+            return _json_resp({'ok': False, 'reason': 'no_route'}, 200)
+        # a duração vem como '1234s'
+        segundos = int(float(str(rotas[0].get('duration', '0s')).rstrip('s') or 0))
+        metros = int(rotas[0].get('distanceMeters') or 0)
+        return _json_resp({'ok': True,
+                           'seconds': segundos,
+                           'minutes': int(math.ceil(segundos / 60.0)),
+                           'miles': round(metros / 1609.344, 1)}, 200)
+    except Exception as e:
+        print(f'[pkg/route] erro: {type(e).__name__}: {e}')
+        return _json_resp({'ok': False, 'reason': 'error'}, 200)
+
+
 @app.route('/api/transfer/pkg/checkout', methods=['POST', 'OPTIONS'])
 def pkg_checkout():
     """Recalcula o preço no servidor e devolve o Checkout do Stripe.
@@ -2437,12 +2561,17 @@ def pkg_checkout():
         meta = {'v': '1', 'ord': ord_token, 'n': str(len(segs)),
                 'tot': str(int(round(total * 100))),
                 'fn': cust['first_name'][:60], 'ln': cust['last_name'][:60],
-                'em': cust['email'][:80], 'ph': cust['phone_number'][:30],
-                'addr': (data.get('pickup_address') or '')[:200]}
+                'em': cust['email'][:80], 'ph': cust['phone_number'][:30]}
         for i, s in enumerate(segs):
             meta[f's{i}'] = (f"{s['start_date']}|{s['start_time']}|"
                              f"{s['end_date']}|{s['end_time']}|"
                              f"{int(round(s['amount'] * 100))}")
+            # endereços em chaves próprias: entram texto livre do cliente e
+            # dividiriam o s{i} no pipe
+            if s.get('pickup'):
+                meta[f'a{i}'] = s['pickup']
+            if s.get('dropoff'):
+                meta[f'b{i}'] = s['dropoff']
 
         session = _stripe.checkout.Session.create(
             mode='payment',
@@ -2477,6 +2606,15 @@ def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
     if not cust.get('email'):
         return 'sem email'
     fmt_dia = lambda d: datetime.strptime(d, '%Y-%m-%d').strftime('%a, %b %d, %Y')
+    def _trajeto(b):
+        """Retirada → destino do intervalo, quando o cliente informou."""
+        ida, volta = (b.get('pickup') or '').strip(), (b.get('dropoff') or '').strip()
+        if not ida and not volta:
+            return ''
+        seta = ' → ' if ida and volta else ''
+        return (f'<br><span style="color:#5b7a72;font-size:13px;">📍 '
+                f'{html_escape(ida)}{seta}{html_escape(volta)}</span>')
+
     linhas = ''.join(
         f'''<tr>
               <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;">
@@ -2485,7 +2623,7 @@ def _pkg_email_cliente(cust, ord_token, blocos, total, pickup):
                     f'{b["start_time"]}–{b["end_time"]}'
                     if b["start_date"] == b["end_date"] else
                     f'{b["start_time"]} → {fmt_dia(b["end_date"])} {b["end_time"]}'
-                } · {_pkg_duracao(b)}</span>
+                } · {_pkg_duracao(b)}</span>{_trajeto(b)}
               </td>
               <td style="padding:10px 12px;border-bottom:1px solid #e6ece8;text-align:right;
                          white-space:nowrap;color:#0E463E;font-weight:600;">USD {b["amount"]:.2f}</td>
@@ -2598,7 +2736,6 @@ def _pkg_fulfil(session):
         return
 
     n = int(_sv(meta, 'n') or 0)
-    meta_addr = _sv(meta, 'addr', '')
     cust = {'first_name': _sv(meta, 'fn', ''), 'last_name': _sv(meta, 'ln', ''),
             'email': _sv(meta, 'em', ''), 'phone_number': _sv(meta, 'ph', '')}
     segs = []
@@ -2611,7 +2748,9 @@ def _pkg_fulfil(session):
         fim = datetime.strptime(f'{ed} {et}', '%Y-%m-%d %H:%M')
         horas = int(math.ceil((fim - ini).total_seconds() / 3600))
         segs.append({'start_date': sd, 'start_time': stt, 'end_date': ed, 'end_time': et,
-                     'hours': horas, 'amount': int(cents) / 100.0})
+                     'hours': horas, 'amount': int(cents) / 100.0,
+                     'pickup': _sv(meta, f'a{i}', '') or '',
+                     'dropoff': _sv(meta, f'b{i}', '') or ''})
 
     customer_id = log.get('cid')
     if not customer_id and segs:
@@ -2625,7 +2764,8 @@ def _pkg_fulfil(session):
             captured_cents += int(round(seg['amount'] * 100))
             continue
         try:
-            rid = _hq_create_block(seg, cust, customer_id, ord_token, i, meta_addr)
+            rid = _hq_create_block(seg, cust, customer_id, ord_token, i,
+                                   seg.get('pickup', ''))
             log[f'r{i}'] = str(rid)
             _stripe.PaymentIntent.modify(pi_id, metadata=log)   # grava antes de seguir
             _hq_settle(rid, seg['amount'], pi_id)
@@ -2657,7 +2797,7 @@ def _pkg_fulfil(session):
         res_mail = _pkg_email_cliente(
             cust, ord_token,
             [s for i, s in enumerate(segs) if log.get(f'r{i}') != 'FAIL'],
-            captured_cents / 100.0, meta_addr)
+            captured_cents / 100.0, None)
     except Exception as e:
         res_mail = f'EXCEÇÃO {type(e).__name__}: {e}'[:160]
         print(f'[pkg] e-mail cliente estourou: {e}')
@@ -2676,11 +2816,12 @@ def _pkg_fulfil(session):
                             'subject': f'🚐 Pacote transfer {ord_token} — {len(segs) - len(falhas)}/{len(segs)} blocos',
                             'text': (f'Pedido: {ord_token}\nCliente: {cust["first_name"]} {cust["last_name"]}'
                                      f' ({cust["email"]} / {cust["phone_number"]})\n'
-                                     f'Capturado: USD {captured_cents / 100:.2f}\nStripe: {pi_id}\n'
-                                     f'Retirada: {meta_addr or "—"}\n\n'
-                                     + '\n'.join(
+                                     f'Capturado: USD {captured_cents / 100:.2f}\nStripe: {pi_id}\n\n'
+                                     + '\n\n'.join(
                                          f'  {_pkg_rotulo(s)} '
-                                         f'USD {s["amount"]:.2f} → reserva {log.get(f"r{i}")}'
+                                         f'USD {s["amount"]:.2f} → reserva {log.get(f"r{i}")}\n'
+                                         f'     Retirada: {s.get("pickup") or "a combinar"}\n'
+                                         f'     Destino:  {s.get("dropoff") or "a combinar"}'
                                          for i, s in enumerate(segs))
                                      + (f'\n\n⚠️ BLOCOS COM FALHA: {falhas} — verificar na HQ' if falhas else ''))},
                       timeout=10)
