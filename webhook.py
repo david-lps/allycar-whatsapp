@@ -2195,6 +2195,12 @@ def _hq_create_block(seg, cust, customer_id, ord_token, index, pickup_address):
         'additional_charges[]': '',
         'manual_discount': str(desconto),
         'manual_discount_is_percentage': '0',
+        # Cala o e-mail automático da HQ: um pacote vira N reservas, e sem isto
+        # o cliente receberia N confirmações da HQ além da nossa. Confirmado em
+        # teste de caixa de entrada — CUIDADO: o campo `confirmation_email_sent`
+        # da reserva marca 1 de qualquer jeito, ele é escrito por quem enfileira
+        # e não por quem envia. Não usar esse contador para validar isto.
+        'skip_confirmation_email': 'true',
         # únicos campos de texto livre que a HQ realmente grava
         'referral': f'{ord_token}#{index}',
         'pick_up_location_custom': (pickup_address or '')[:250],
