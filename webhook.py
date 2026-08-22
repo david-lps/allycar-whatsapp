@@ -6,7 +6,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from main import conectar_google_sheets
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import time
 import threading
@@ -1725,29 +1725,112 @@ def braza_status():
         return _braza_fail(e)
 
 
-# Reconciliação na HQ. Precisa de 2 valores da conta HQ (ainda a confirmar):
-HQ_PAYMENT_ITEM_TYPE = os.getenv('HQ_PAYMENT_ITEM_TYPE', 'car_rental.reservations')  # confirmado no step 6
-HQ_PAYMENT_METHOD_ID = os.getenv('HQ_PAYMENT_METHOD_ID')   # id do método PIX/Braza na HQ (candidato: 12)
+# =====================================================================
+# BAIXA DO PAGAMENTO NA HQ (reconciliação da BrazaBank)
+#
+# Equivale ao que a equipe fazia à mão: reserva -> "step 6 - Payments" ->
+# "Add Offline Payment". O endpoint é
+#     POST /car-rental/reservations/{id}/payments
+# e os campos têm nomes genéricos (field_NN) porque vêm do sistema de campos
+# da HQ. Decifrados um a um contra a API:
+#     field_29 = 'payment'   (o outro valor, 'authorization', vira CAUÇÃO)
+#     field_31 = rótulo do método de pagamento (texto livre; aparece na HQ)
+#     field_32 = data — precisa vir COMPLETA e também em partes
+#     field_34 = valor
+#     field_37 = 'Approved'  🚨 é ESTE que baixa o saldo
+#
+# 🚨 A armadilha: com field_37='paid' a HQ aceita (success=true), cria o
+# registro e tira a reserva de 'pending' — mas o outstanding_balance NÃO
+# muda e total_paid continua zero. Só 'Approved' quita de verdade.
+#
+# ⚠️ Pagamento registrado NÃO pode ser apagado nem editado pela API
+# (DELETE e PUT devolvem 500 — o controller não tem esses métodos). Por isso
+# a função é idempotente por construção: lê o saldo em aberto na HQ e só
+# registra se houver saldo, sempre no valor exato dele. Chamar duas vezes
+# não duplica.
+#
+# Registramos o SALDO DA HQ, não o valor pago na Braza — no PIX há desconto
+# por fora, e o que interessa aqui é a reserva não ficar devendo.
+# =====================================================================
+HQ_PAYMENT_ITEM_TYPE  = os.getenv('HQ_PAYMENT_ITEM_TYPE', 'car_rental.reservations')
+HQ_PAYMENT_TYPE_LABEL = os.getenv('HQ_PAYMENT_TYPE_LABEL', 'BrazaBank')
+
+
+def _hq_reservation_payment_state(reservation_id):
+    """Devolve (status, outstanding_balance) da reserva, direto da HQ."""
+    resp = requests.get(
+        f'{HQ_API_BASE}/car-rental/reservations/{reservation_id}/payments',
+        headers={'Authorization': HQ_API_TOKEN}, timeout=15)
+    r = ((resp.json().get('data') or {}).get('reservation') or {})
+    return r.get('status'), r.get('outstanding_balance')
+
+
+def _hq_hoje_miami():
+    """Data de hoje no fuso da operação (Miami/Orlando)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo('America/New_York'))
+    except Exception:
+        return datetime.utcnow() - timedelta(hours=4)
 
 
 def _hq_register_payment(order_ref, amount, label):
-    """Dá baixa do pagamento na reserva do HQ. Sem os env vars, faz no-op seguro."""
-    if not (HQ_PAYMENT_ITEM_TYPE and HQ_PAYMENT_METHOD_ID and order_ref):
-        print(f'[braza/webhook] HQ_PAYMENT_* não configurado — baixa MANUAL necessária p/ {order_ref}')
-        return {'skipped': True}
+    """Dá baixa do pagamento na reserva da HQ. Idempotente: se não há saldo, não faz nada."""
+    if not order_ref:
+        print('[braza/hq-baixa] sem order_ref — nada a fazer')
+        return {'skipped': 'sem order_ref'}
+
+    try:
+        status, saldo = _hq_reservation_payment_state(order_ref)
+    except Exception as e:
+        print(f'[braza/hq-baixa] ❌ não consegui ler a reserva {order_ref}: {e}')
+        return {'erro': str(e)}
+
+    try:
+        saldo_f = float(saldo)
+    except (TypeError, ValueError):
+        saldo_f = 0.0
+
+    if saldo_f <= 0:
+        print(f'[braza/hq-baixa] reserva {order_ref} já quitada (saldo={saldo}, status={status}) — nada a fazer')
+        return {'skipped': 'sem saldo', 'outstanding': saldo}
+
+    hoje = _hq_hoje_miami()
     params = {
-        'item_type':         HQ_PAYMENT_ITEM_TYPE,
-        'item_id':           order_ref,
-        'payment_method_id': HQ_PAYMENT_METHOD_ID,
-        'amount':            amount,
-        'label':             label,
-        'description':       f'BrazaBank {label} - reserva {order_ref}',
+        'field_29':        'payment',                        # pagamento, não caução
+        'field_31':        label or HQ_PAYMENT_TYPE_LABEL,   # rótulo visível na HQ
+        'field_34':        f'{saldo_f:.2f}',
+        'field_37':        'Approved',                       # 🚨 só este baixa o saldo
+        'field_32':        hoje.strftime('%Y-%m-%d'),
+        'field_32[year]':  hoje.strftime('%Y'),
+        'field_32[month]': str(hoje.month),
+        'field_32[day]':   str(hoje.day),
     }
-    resp = requests.post(
-        f'{HQ_API_BASE}/payment-gateways/payment-transactions/',
-        headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=15)
-    print(f'[braza/webhook] HQ payment-transactions: {resp.status_code} | {resp.text[:300]}')
-    return {'status': resp.status_code}
+    try:
+        resp = requests.post(
+            f'{HQ_API_BASE}/car-rental/reservations/{order_ref}/payments',
+            headers={'Authorization': HQ_API_TOKEN}, params=params, timeout=20)
+        j = resp.json()
+    except Exception as e:
+        print(f'[braza/hq-baixa] ❌ erro no POST da reserva {order_ref}: {e}')
+        return {'erro': str(e)}
+
+    if not j.get('success'):
+        print(f'[braza/hq-baixa] ❌ HQ recusou a baixa da reserva {order_ref}: '
+              f'{json.dumps(j.get("errors"), ensure_ascii=False)[:300]}')
+        return {'erro': j.get('errors')}
+
+    # Confere o efeito — o que importa é o saldo, não o "success"
+    novo_status, novo_saldo = None, None
+    try:
+        novo_status, novo_saldo = _hq_reservation_payment_state(order_ref)
+    except Exception:
+        pass
+    print(f'[braza/hq-baixa] ✅ reserva {order_ref}: baixa de ${saldo_f:.2f} ({label}) — '
+          f'saldo {saldo} -> {novo_saldo} | status {status} -> {novo_status}')
+    return {'ok': True, 'registrado': f'{saldo_f:.2f}',
+            'outstanding_antes': saldo, 'outstanding_depois': novo_saldo,
+            'status_depois': novo_status}
 
 
 _braza_notified = set()   # cod_quotes já avisados — evita e-mail duplicado
@@ -1759,20 +1842,22 @@ def _notify_team_payment(order_ref, status, amount_usd, method):
     status = (status or '').upper()
 
     if status == 'PAID':
-        subject = f'✅ Pagamento CONFIRMADO ({method}) - reserva {order_ref} - AÇÃO em até 2h'
+        subject = f'✅ Pagamento CONFIRMADO ({method}) - reserva {order_ref}'
         body = (
             'Pagamento CONFIRMADO via BrazaBank.\n\n'
             f'Reserva HQ: {order_ref}\n'
             f'Status: {status}\n'
             f'Metodo: {method}\n'
             f'Valor USD: {amount_usd}\n\n'
-            'Próximos passos (DEVE SER FEITO EM ATÉ 2 HORAS):\n\n'
-            f'Acessar a reserva {order_ref} no sistema HQ, entrar no "step 6 - Payments" e inserir '
-            'manualmente um pagamento no botão "Add Offline Payment" com o valor acima.\n\n'
-            'Logo em seguida verificar se ficou algum Outstanding Balance, uma vez que para pagamentos '
-            'como PIX oferecemos descontos por fora.\n\n'
-            'Em caso da necessidade de ajustar o Balance, adicionar manualmente o desconto correspondente '
-            'na seção "Discounts", logo abaixo, através do botão "Add Discount".'
+            '⚠️ NÃO lance este pagamento à mão.\n\n'
+            'A baixa na HQ agora é AUTOMÁTICA: o sistema lança o pagamento no '
+            f'"step 6 - Payments" da reserva {order_ref} pelo valor do saldo em aberto da própria HQ, '
+            'zerando o Outstanding Balance. Lançar de novo pelo "Add Offline Payment" deixaria a '
+            'reserva paga em DOBRO — e pagamento registrado não pode ser apagado pela API.\n\n'
+            'O que fazer: só confira se a reserva está sem Outstanding Balance. Se por algum motivo '
+            'ainda houver saldo, aí sim lance manualmente.\n\n'
+            'Obs.: registramos o valor da HQ, não o valor pago na Braza — no PIX há desconto por fora, '
+            'então os dois números podem não bater.'
         )
     else:
         subject = f'Pagamento {status} ({method}) - reserva {order_ref}'
@@ -1821,6 +1906,7 @@ def _watch_cc_payment(cc_uuid, cod_quote, expires_in=0):
                 amount    = sale.get('amount')
                 method    = sale.get('paymentMethod') or 'cartao'
                 _notify_team_payment(order_ref, 'PAID', amount, method)
+                _hq_register_payment(order_ref, amount, method)
                 print(f'[braza/cc-watch] aprovado e notificado (uuid={cc_uuid} cod_quote={cod_quote})')
                 return
         except Exception as e:
@@ -1854,6 +1940,8 @@ def _watch_pix_payment(pix_id, cod_quote, expires_in=0):
                 order_ref = sale.get('identifier') or cod_quote or pix_id
                 _notify_team_payment(order_ref, 'PAID', sale.get('amount'),
                                      sale.get('paymentMethod') or 'pix')
+                _hq_register_payment(order_ref, sale.get('amount'),
+                                     sale.get('paymentMethod') or 'pix')
                 print(f'[braza/pix-watch] pago e notificado (pix={pix_id} cod_quote={cod_quote})')
                 return
             if estado in ('EXPIRED', 'REFUNDED', 'CANCELED', 'CANCELLED'):
@@ -1870,8 +1958,7 @@ def braza_confirm():
     """
     Interino (enquanto o webhook da Braza não está ativo): o front chama isto
     quando detecta o PIX pago. RE-VERIFICA o pagamento no servidor (não confia
-    no cliente) e, se realmente pago, avisa a equipe por e-mail. A baixa na HQ
-    segue MANUAL por enquanto.
+    no cliente) e, se realmente pago, avisa a equipe por e-mail e DÁ BAIXA na HQ.
     """
     if request.method == 'OPTIONS':
         return _cors(app.make_default_options_response())
@@ -1902,7 +1989,9 @@ def braza_confirm():
 
         info = braza.get_sale(cod_quote) if cod_quote else {}
         _notify_team_payment(info.get('identifier'), 'PAID', info.get('amount'), info.get('paymentMethod', 'pix'))
-        return _braza_json({'ok': True, 'paid': True, 'notified': True})
+        baixa = _hq_register_payment(info.get('identifier'), info.get('amount'),
+                                     info.get('paymentMethod', 'pix'))
+        return _braza_json({'ok': True, 'paid': True, 'notified': True, 'hq_baixa': baixa})
     except Exception as e:
         return _braza_fail(e)
 
