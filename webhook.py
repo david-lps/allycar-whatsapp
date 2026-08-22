@@ -1836,28 +1836,62 @@ def _hq_register_payment(order_ref, amount, label):
 _braza_notified = set()   # cod_quotes já avisados — evita e-mail duplicado
 
 
-def _notify_team_payment(order_ref, status, amount_usd, method):
+def _notify_team_payment(order_ref, status, amount_usd, method, baixa=None):
     """Avisa a equipe por e-mail (Resend) sobre a mudança de pagamento.
-    amount_usd = sale.amount, que é o valor em USD (não BRL)."""
+    amount_usd = sale.amount, que é o valor em USD (não BRL).
+
+    `baixa` é o retorno de _hq_register_payment. O e-mail relata o que REALMENTE
+    aconteceu — chamar antes da baixa faria o texto prometer uma quitação que
+    pode ter falhado, e a equipe seria instruída a não agir justamente quando
+    precisa agir."""
     status = (status or '').upper()
 
     if status == 'PAID':
-        subject = f'✅ Pagamento CONFIRMADO ({method}) - reserva {order_ref}'
+        baixa = baixa or {}
+        quitou   = bool(baixa.get('ok'))
+        ja_estava = baixa.get('skipped') == 'sem saldo'
+        falhou   = not (quitou or ja_estava)
+
+        if quitou:
+            marca, acao = '✅', ''
+            detalhe = (
+                f'BAIXA AUTOMÁTICA FEITA na HQ: ${baixa.get("registrado")} lançado no '
+                f'"step 6 - Payments".\n'
+                f'Outstanding Balance: {baixa.get("outstanding_antes")} -> '
+                f'{baixa.get("outstanding_depois")}\n'
+                f'Status da reserva: {baixa.get("status_depois")}\n\n'
+                '⚠️ NÃO lance este pagamento à mão. Lançar de novo pelo "Add Offline Payment" '
+                'deixaria a reserva paga em DOBRO — e pagamento registrado NÃO pode ser apagado '
+                'pela API, só no painel.\n\n'
+                'Nada a fazer. Se quiser conferir, veja que a reserva está sem Outstanding Balance.'
+            )
+        elif ja_estava:
+            marca, acao = '✅', ''
+            detalhe = (
+                'A reserva já estava quitada na HQ (sem Outstanding Balance) — '
+                'nenhum lançamento foi feito.\n\nNada a fazer.'
+            )
+        else:
+            marca, acao = '🚨', ' - AÇÃO NECESSÁRIA'
+            detalhe = (
+                '🚨 A BAIXA AUTOMÁTICA FALHOU. O cliente PAGOU, mas a reserva continua devendo '
+                'na HQ — e reserva com saldo em aberto acaba CANCELADA.\n\n'
+                f'Motivo: {json.dumps(baixa.get("erro"), ensure_ascii=False)[:300]}\n\n'
+                'AÇÃO MANUAL NECESSÁRIA:\n'
+                f'Abra a reserva {order_ref} na HQ, vá em "step 6 - Payments" e lance o pagamento '
+                'pelo botão "Add Offline Payment" com o valor do Outstanding Balance.'
+            )
+
+        subject = f'{marca} Pagamento CONFIRMADO ({method}) - reserva {order_ref}{acao}'
         body = (
             'Pagamento CONFIRMADO via BrazaBank.\n\n'
             f'Reserva HQ: {order_ref}\n'
             f'Status: {status}\n'
             f'Metodo: {method}\n'
             f'Valor USD: {amount_usd}\n\n'
-            '⚠️ NÃO lance este pagamento à mão.\n\n'
-            'A baixa na HQ agora é AUTOMÁTICA: o sistema lança o pagamento no '
-            f'"step 6 - Payments" da reserva {order_ref} pelo valor do saldo em aberto da própria HQ, '
-            'zerando o Outstanding Balance. Lançar de novo pelo "Add Offline Payment" deixaria a '
-            'reserva paga em DOBRO — e pagamento registrado não pode ser apagado pela API.\n\n'
-            'O que fazer: só confira se a reserva está sem Outstanding Balance. Se por algum motivo '
-            'ainda houver saldo, aí sim lance manualmente.\n\n'
-            'Obs.: registramos o valor da HQ, não o valor pago na Braza — no PIX há desconto por fora, '
-            'então os dois números podem não bater.'
+            f'{detalhe}\n\n'
+            'Obs.: na HQ registramos o saldo dela, não o valor pago na Braza — no PIX há desconto '
+            'por fora, então os dois números podem não bater.'
         )
     else:
         subject = f'Pagamento {status} ({method}) - reserva {order_ref}'
@@ -1905,8 +1939,8 @@ def _watch_cc_payment(cc_uuid, cod_quote, expires_in=0):
                 order_ref = sale.get('identifier') or cod_quote
                 amount    = sale.get('amount')
                 method    = sale.get('paymentMethod') or 'cartao'
-                _notify_team_payment(order_ref, 'PAID', amount, method)
-                _hq_register_payment(order_ref, amount, method)
+                baixa = _hq_register_payment(order_ref, amount, method)   # baixa ANTES do e-mail
+                _notify_team_payment(order_ref, 'PAID', amount, method, baixa)
                 print(f'[braza/cc-watch] aprovado e notificado (uuid={cc_uuid} cod_quote={cod_quote})')
                 return
         except Exception as e:
@@ -1938,10 +1972,9 @@ def _watch_pix_payment(pix_id, cod_quote, expires_in=0):
                 except Exception:
                     sale = {}
                 order_ref = sale.get('identifier') or cod_quote or pix_id
-                _notify_team_payment(order_ref, 'PAID', sale.get('amount'),
-                                     sale.get('paymentMethod') or 'pix')
-                _hq_register_payment(order_ref, sale.get('amount'),
-                                     sale.get('paymentMethod') or 'pix')
+                metodo = sale.get('paymentMethod') or 'pix'
+                baixa  = _hq_register_payment(order_ref, sale.get('amount'), metodo)  # antes do e-mail
+                _notify_team_payment(order_ref, 'PAID', sale.get('amount'), metodo, baixa)
                 print(f'[braza/pix-watch] pago e notificado (pix={pix_id} cod_quote={cod_quote})')
                 return
             if estado in ('EXPIRED', 'REFUNDED', 'CANCELED', 'CANCELLED'):
@@ -1988,9 +2021,10 @@ def braza_confirm():
         _braza_notified.add(key)
 
         info = braza.get_sale(cod_quote) if cod_quote else {}
-        _notify_team_payment(info.get('identifier'), 'PAID', info.get('amount'), info.get('paymentMethod', 'pix'))
         baixa = _hq_register_payment(info.get('identifier'), info.get('amount'),
-                                     info.get('paymentMethod', 'pix'))
+                                     info.get('paymentMethod', 'pix'))   # baixa ANTES do e-mail
+        _notify_team_payment(info.get('identifier'), 'PAID', info.get('amount'),
+                             info.get('paymentMethod', 'pix'), baixa)
         return _braza_json({'ok': True, 'paid': True, 'notified': True, 'hq_baixa': baixa})
     except Exception as e:
         return _braza_fail(e)
@@ -2017,11 +2051,11 @@ def braza_webhook():
             order_ref  = sale.get('identifier')
             amount_usd = sale.get('amount')   # sale.amount é o valor em USD
             method     = sale.get('paymentMethod', 'braza')
+            # baixa ANTES do e-mail, pra que ele relate o resultado real
+            baixa = _hq_register_payment(order_ref, amount_usd, method) if status == 'PAID' else None
             if cod_quote not in _braza_notified:                          # dedup c/ o /confirm
                 _braza_notified.add(cod_quote)
-                _notify_team_payment(order_ref, status, amount_usd, method)
-            if status == 'PAID':
-                _hq_register_payment(order_ref, amount_usd, method)
+                _notify_team_payment(order_ref, status, amount_usd, method, baixa)
     except Exception as e:
         print(f'[braza/webhook] erro: {e}')
     return app.response_class(response='{"ok":true}', status=200, mimetype='application/json')
