@@ -1028,15 +1028,20 @@ def agent_stats_data():
     conversa_iniciada = total - sem
     viram_preco = reserva_chat + reclamou + nao_cont
 
+    # "ref" = índice da etapa contra a qual o percentual é comparado.
+    # Responderam e Clicaram são caminhos PARALELOS a partir de Leads (ref 0):
+    # um lead pode clicar no link do disparo sem nunca responder, e vice-versa.
+    NOTA_S5 = ("tela de passagem: quem chega aqui quase sempre conclui e vira "
+               "reserva, então parar nela é raro")
     leads_funil = [
         {"nome": "Leads", "valor": total, "filtro": "todos"},
-        {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada"},
-        {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco"},
-        {"nome": "Clicaram no site", "valor": clicaram, "filtro": "clicou"},
-        {"nome": "Step 2 · Veículos", "valor": step_ge[2]},
-        {"nome": "Step 3 · Configuração", "valor": step_ge[3]},
-        {"nome": "Step 4 · Cliente", "valor": step_ge[4]},
-        {"nome": "Step 5 · Confirmação", "valor": step_ge[5]},
+        {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada", "ref": 0},
+        {"nome": "Clicaram no site", "valor": clicaram, "filtro": "clicou", "ref": 0},
+        {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco", "ref": 1},
+        {"nome": "Step 2 · Veículos", "valor": step_ge[2], "ref": 2},
+        {"nome": "Step 3 · Configuração", "valor": step_ge[3], "ref": 4},
+        {"nome": "Step 4 · Cliente", "valor": step_ge[4], "ref": 5},
+        {"nome": "Step 5 · Confirmação", "valor": step_ge[5], "ref": 6, "nota": NOTA_S5},
     ]
 
     g = hq_attempts.funil_global()
@@ -1044,7 +1049,7 @@ def agent_stats_data():
         {"nome": "Step 2 · Veículos", "valor": g["step2"]},
         {"nome": "Step 3 · Configuração", "valor": g["step3"]},
         {"nome": "Step 4 · Cliente", "valor": g["step4"]},
-        {"nome": "Step 5 · Confirmação", "valor": g["step5"]},
+        {"nome": "Step 5 · Confirmação", "valor": g["step5"], "nota": NOTA_S5},
     ]
 
     return {
@@ -1097,6 +1102,7 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .fill.leads{background:linear-gradient(90deg,#17864f,#28cd82)}
   .fill.site{background:linear-gradient(90deg,#2a6299,#4ea1e6)}
   .st-sub{color:var(--mut2);font-size:11px;margin-top:4px}
+  .st-nota{color:#d9ae5a;opacity:.85}
   .goal{margin-top:4px;border:1px solid rgba(240,192,74,.42);background:rgba(240,192,74,.09);border-radius:13px;padding:15px 16px;text-align:center}
   .goal-label{color:#f0c04a;font-weight:800;font-size:14px;letter-spacing:.2px}
   .goal-val{font-size:36px;font-weight:800;margin:3px 0}
@@ -1124,7 +1130,7 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
     <div id="leadsGoal"></div>
     <div style="height:14px"></div>
     <div id="leadsInd"></div>
-    <div class="note">Passos do site vêm do cruzamento do clique (IP) com as tentativas de reserva da HQ. Nem todo lead que clicou iniciou uma reserva.</div>
+    <div class="note"><b>Responderam</b> e <b>Clicaram no site</b> são caminhos próprios a partir do total: um lead pode clicar no link do disparo sem nunca responder no WhatsApp, e vice-versa — por isso os dois são medidos sobre os leads, não um sobre o outro. Os passos do site vêm do cruzamento do clique (IP) com as tentativas de reserva da HQ.</div>
   </section>
   <section class="col">
     <h2>🔵 Site inteiro (HQ)</h2>
@@ -1148,9 +1154,18 @@ function renderFunil(elId, stages, cls, linkable){
   document.getElementById(elId).innerHTML=stages.map((s,i)=>{
     const w=topo>0?Math.max(3,Math.round(s.valor*100/topo)):0;
     const pTop=pct(s.valor,topo);
-    const prev=i>0?stages[i-1].valor:s.valor;
-    const ret=i>0?pct(s.valor,prev):100;      // retenção: quanto passou da etapa anterior
-    const sub=i===0?'100% · topo do funil':(pTop+'% do topo · '+ret+'% da etapa anterior');
+    // "ref" indica contra qual etapa comparar (caminhos paralelos comparam com o topo)
+    const ri=(s.ref!==undefined&&s.ref!==null)?s.ref:(i-1);
+    let sub;
+    if(i===0){
+      sub='100% · topo do funil';
+    }else{
+      const base=stages[ri]||stages[0];
+      const p=pct(s.valor,base.valor);
+      sub=(ri===0)?(p+'% dos leads · caminho próprio')
+                  :(pTop+'% do topo · '+p+'% de "'+base.nome+'"');
+    }
+    if(s.nota) sub+=' <span class="st-nota">— '+s.nota+'</span>';
     const inner='<div class="st-head"><span class="st-name">'+s.nome+'</span>'
       +'<span class="st-val">'+s.valor+(i>0?(' <em>· '+pTop+'%</em>'):'')+'</span></div>'
       +'<div class="track"><div class="fill '+cls+'" style="width:'+w+'%"></div></div>'
@@ -1189,8 +1204,10 @@ async function load(){
   document.getElementById('siteConv').textContent=pct(d.site_reservas,step2)+'%';
   document.getElementById('siteGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reservas ativas)', d.site_reservas,
     'todas as origens · '+pct(d.site_reservas,step2)+'% de quem chegou aos Veículos');
-  document.getElementById('siteNote').textContent=
-    'Amostra: '+(d.site_amostra||0)+' tentativas'+(d.site_periodo?(' ('+d.site_periodo+')'):'')+'.';
+  document.getElementById('siteNote').innerHTML=
+    'Amostra: '+(d.site_amostra||0)+' tentativas'+(d.site_periodo?(' ('+d.site_periodo+')'):'')+'. '
+    +'A HQ registra <b>onde a pessoa parou</b>: quem conclui o pagamento vira reserva e sai desta lista — '
+    +'por isso o Step 5 fica perto de zero enquanto o card de reservas tem número.';
 }
 load();
 </script></body></html>"""
