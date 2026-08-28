@@ -1029,19 +1029,18 @@ def agent_stats_data():
     viram_preco = reserva_chat + reclamou + nao_cont
 
     # "ref" = índice da etapa contra a qual o percentual é comparado.
-    # Responderam e Clicaram são caminhos PARALELOS a partir de Leads (ref 0):
+    # Clicaram e Responderam são caminhos PARALELOS a partir de Leads (ref 0):
     # um lead pode clicar no link do disparo sem nunca responder, e vice-versa.
-    NOTA_S5 = ("tela de passagem: quem chega aqui quase sempre conclui e vira "
-               "reserva, então parar nela é raro")
+    # O funil vai até o Step 4: a HQ registra onde a pessoa PAROU, e quem passa
+    # da confirmação conclui o pagamento e vira reserva (sai das tentativas).
     leads_funil = [
         {"nome": "Leads", "valor": total, "filtro": "todos"},
-        {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada", "ref": 0},
         {"nome": "Clicaram no site", "valor": clicaram, "filtro": "clicou", "ref": 0},
-        {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco", "ref": 1},
-        {"nome": "Step 2 · Veículos", "valor": step_ge[2], "ref": 2},
+        {"nome": "Responderam", "valor": conversa_iniciada, "filtro": "conversa_iniciada", "ref": 0},
+        {"nome": "Viram preço (chat)", "valor": viram_preco, "filtro": "viram_preco", "ref": 2},
+        {"nome": "Step 2 · Veículos", "valor": step_ge[2], "ref": 1},
         {"nome": "Step 3 · Configuração", "valor": step_ge[3], "ref": 4},
         {"nome": "Step 4 · Cliente", "valor": step_ge[4], "ref": 5},
-        {"nome": "Step 5 · Confirmação", "valor": step_ge[5], "ref": 6, "nota": NOTA_S5},
     ]
 
     g = hq_attempts.funil_global()
@@ -1049,7 +1048,6 @@ def agent_stats_data():
         {"nome": "Step 2 · Veículos", "valor": g["step2"]},
         {"nome": "Step 3 · Configuração", "valor": g["step3"]},
         {"nome": "Step 4 · Cliente", "valor": g["step4"]},
-        {"nome": "Step 5 · Confirmação", "valor": g["step5"], "nota": NOTA_S5},
     ]
 
     return {
@@ -1141,7 +1139,7 @@ _STATS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
     <div class="note" id="siteNote"></div>
   </section>
 </div>
-<div class="legend">Steps do widget de reserva: 2·Veículos · 3·Configuração · 4·Cliente · 5·Confirmação. O <b>Step 6 · Pagamento</b> é feito fora do widget (página de pagamento), então não aparece como "tentativa" — quem paga vira <b>reserva de fato</b> (reservas ativas na HQ, open + rental).</div>
+<div class="legend">Steps do widget de reserva: 2·Veículos · 3·Configuração · 4·Cliente. O <b>Step de Pagamento</b> acontece fora do widget, então não aparece como "tentativa" — quem paga vira <b>reserva de fato</b> (reservas na HQ: futuras, em curso e concluídas).</div>
 </div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
@@ -1191,7 +1189,7 @@ async function load(){
   const total=(d.leads_funil[0]||{}).valor||0;
   renderFunil('leadsFunil', d.leads_funil, 'leads', true);
   document.getElementById('leadsConv').textContent=pct(d.leads_reservou,total)+'%';
-  document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reserva de fato)', d.leads_reservou,
+  document.getElementById('leadsGoal').innerHTML=goalCard('🎯 Step de Pagamento (reserva de fato)', d.leads_reservou,
     pct(d.leads_reservou,total)+'% dos leads · clique para ver quem', lurl('reservou'));
   document.getElementById('leadsInd').innerHTML=
     '<a class="chip" title="Leads fora da área (Orlando + 30 milhas)" href="'+lurl('fora')+'">'
@@ -1202,12 +1200,12 @@ async function load(){
   const step2=(d.site_funil[0]||{}).valor||0;
   renderFunil('siteFunil', d.site_funil, 'site', false);
   document.getElementById('siteConv').textContent=pct(d.site_reservas,step2)+'%';
-  document.getElementById('siteGoal').innerHTML=goalCard('🎯 Step 6 · Pagamento (reservas ativas)', d.site_reservas,
+  document.getElementById('siteGoal').innerHTML=goalCard('🎯 Step de Pagamento (reservas ativas)', d.site_reservas,
     'todas as origens · '+pct(d.site_reservas,step2)+'% de quem chegou aos Veículos');
   document.getElementById('siteNote').innerHTML=
     'Amostra: '+(d.site_amostra||0)+' tentativas'+(d.site_periodo?(' ('+d.site_periodo+')'):'')+'. '
     +'A HQ registra <b>onde a pessoa parou</b>: quem conclui o pagamento vira reserva e sai desta lista — '
-    +'por isso o Step 5 fica perto de zero enquanto o card de reservas tem número.';
+    +'por isso o funil vai até o Step 4 e o desfecho aparece no card de pagamento.';
 }
 load();
 </script></body></html>"""
