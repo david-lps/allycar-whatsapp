@@ -744,6 +744,64 @@ def health():
 # ENDPOINT - CAPTURA DE LEAD (HOME)
 # =====================================
 
+@app.route('/api/partners', methods=['POST', 'OPTIONS'])
+def capturar_parceiro():
+    """Captura interesse de parceria (partnerships.html) e avisa o time por e-mail.
+    Separado do /api/leads porque aqui vêm empresa, telefone, tipo e mensagem —
+    o /api/leads só carrega nome e e-mail e dispara o cupom de 5%."""
+    if request.method == 'OPTIONS':
+        return _cors(app.make_default_options_response())
+    try:
+        d = request.get_json(force=True) or {}
+        nome    = (d.get('name')    or '').strip()
+        empresa = (d.get('company') or '').strip()
+        email   = (d.get('email')   or '').strip()
+        fone    = (d.get('phone')   or '').strip()
+        tipo    = (d.get('type')    or '').strip()
+        msg     = (d.get('message') or '').strip()
+
+        if not nome or not email:
+            return _cors(app.response_class(
+                response=json.dumps({'ok': False, 'message': 'Nome e e-mail são obrigatórios'}),
+                status=400, mimetype='application/json'))
+
+        print(f"🤝 Interesse de parceria: {nome} / {empresa} <{email}> | {tipo}")
+
+        corpo = (
+            "Novo interesse de PARCERIA pelo site\n\n"
+            f"Nome: {nome}\n"
+            f"Empresa: {empresa or '—'}\n"
+            f"E-mail: {email}\n"
+            f"Telefone: {fone or '—'}\n"
+            f"Tipo: {tipo or '—'}\n\n"
+            f"Mensagem:\n{msg or '—'}\n"
+        )
+        try:
+            requests.post(
+                'https://api.resend.com/emails',
+                headers={'Authorization': f"Bearer {os.getenv('RESEND_API_KEY')}",
+                         'Content-Type': 'application/json'},
+                json={'from': 'Allycar <booking@allycar.com>',
+                      'to': ['higor@allycar.com', 'david@allycar.com'],
+                      'reply_to': email,
+                      'subject': f'🤝 Parceria: {empresa or nome}',
+                      'text': corpo},
+                timeout=10)
+        except Exception as e:
+            print(f'⚠️ [partners] e-mail falhou: {e}')
+            return _cors(app.response_class(
+                response=json.dumps({'ok': False, 'message': 'Falha ao enviar'}),
+                status=502, mimetype='application/json'))
+
+        return _cors(app.response_class(
+            response=json.dumps({'ok': True}), status=200, mimetype='application/json'))
+    except Exception as e:
+        print(f'❌ [partners] erro: {e}')
+        return _cors(app.response_class(
+            response=json.dumps({'ok': False, 'message': str(e)}),
+            status=500, mimetype='application/json'))
+
+
 @app.route('/api/leads', methods=['POST', 'OPTIONS'])
 def capturar_lead_home():
 
