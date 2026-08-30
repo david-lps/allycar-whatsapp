@@ -637,7 +637,8 @@ def health_disparo():
     """
     if not _dash_ok():
         return {"error": "não autorizado"}, 401
-    out = {"agora_utc": datetime.now(timezone.utc).isoformat()}
+    out = {"agora_utc": datetime.now(timezone.utc).isoformat(),
+           "ultimo_disparo": dict(_disparo_estado)}
 
     # ---- 1. Planilha: quantos leads e em que status ----
     try:
@@ -831,14 +832,49 @@ def _disparar_leads_agente():
     return resumo
 
 
+# Estado do último disparo — dá visibilidade sem depender do log do Railway.
+_disparo_estado = {"rodando": False, "inicio": None, "fim": None,
+                   "resumo": None, "erro": None}
+_disparo_lock = threading.Lock()
+
+
+def _rodar_disparo():
+    """Executa o disparo em segundo plano e guarda o resultado."""
+    try:
+        resumo = _disparar_leads_agente()
+        _disparo_estado["resumo"] = resumo
+        _disparo_estado["erro"] = None
+        print(f"🏁 [agente] disparo concluído: {resumo}")
+    except Exception as e:
+        import traceback
+        _disparo_estado["erro"] = f"{type(e).__name__}: {e}"
+        _disparo_estado["resumo"] = None
+        print(f"❌ Erro no disparo do agente: {e}\n{traceback.format_exc()}")
+    finally:
+        _disparo_estado["fim"] = datetime.now(timezone.utc).isoformat()
+        _disparo_estado["rodando"] = False
+
+
 @app.route("/agent/trigger-send", methods=["GET", "POST"])
 def agent_trigger_send():
-    """Dispara os leads da planilha pelo agente (para o cron chamar)."""
-    try:
-        return {"status": "success", "resumo": _disparar_leads_agente()}, 200
-    except Exception as e:
-        print(f"❌ Erro no disparo do agente: {e}")
-        return {"status": "error", "message": str(e)}, 500
+    """
+    Dispara os leads da planilha (o cron chama). ASSÍNCRONO: o envio pode levar
+    minutos (uma pausa de 2s por lead, mais chamadas a Sheets/HQ/Twilio) e
+    estourava o timeout do gunicorn, matando o worker antes de enviar — daí o
+    'Internal Server Error' que o cron recebia. Agora responde na hora e envia
+    em segundo plano, com trava para não rodar dois disparos ao mesmo tempo.
+    """
+    with _disparo_lock:
+        if _disparo_estado["rodando"]:
+            return {"status": "em_andamento",
+                    "inicio": _disparo_estado["inicio"],
+                    "mensagem": "Um disparo já está rodando; esta chamada foi ignorada."}, 200
+        _disparo_estado.update({"rodando": True,
+                                "inicio": datetime.now(timezone.utc).isoformat(),
+                                "fim": None, "resumo": None, "erro": None})
+    threading.Thread(target=_rodar_disparo, daemon=True).start()
+    return {"status": "iniciado", "inicio": _disparo_estado["inicio"],
+            "mensagem": "Disparo rodando em segundo plano. Veja o resultado em /agent/health/disparo."}, 202
 
 
 @app.route("/agent/health", methods=["GET"])
