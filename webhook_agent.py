@@ -628,6 +628,122 @@ def enviar_inicial():
     return {"status": "enviado", "sid": msg.sid, "to": to, "ref": conversa["ref_code"]}, 200
 
 
+@app.route("/agent/health/disparo", methods=["GET"])
+def health_disparo():
+    """
+    Diagnóstico do disparo — NÃO ENVIA NADA. Espelha a lógica de
+    _disparar_leads_agente() e reporta, lead a lead, o que aconteceria; além do
+    estado da conta Twilio e das últimas mensagens (com códigos de erro).
+    """
+    if not _dash_ok():
+        return {"error": "não autorizado"}, 401
+    out = {"agora_utc": datetime.now(timezone.utc).isoformat()}
+
+    # ---- 1. Planilha: quantos leads e em que status ----
+    try:
+        sheet = conectar_google_sheets()
+        leads = sheet.get_all_records()
+        headers = sheet.row_values(1)
+        out["planilha"] = {"ok": True, "linhas": len(leads), "colunas": headers}
+        from collections import Counter
+        out["planilha"]["por_status"] = dict(
+            Counter((str(l.get("STATUS", "")).strip() or "(vazio)") for l in leads))
+    except Exception as e:
+        out["planilha"] = {"ok": False, "erro": f"{type(e).__name__}: {e}"}
+        return out, 200
+
+    # ---- 2. Simulação lead a lead (mesma ordem de checagens do disparo) ----
+    simulacao, resumo = [], {"enviaria": 0, "ja_sent": 0, "sem_dados": 0,
+                             "fora_horario": 0, "tem_reserva": 0, "erro_checagem": 0}
+    for lead in leads:
+        nome = str(lead.get("NOME", "")).strip()
+        telefone = str(lead.get("TELEFONE", "")).strip()
+        status = str(lead.get("STATUS", "")).strip()
+        if status == "Sent":
+            resumo["ja_sent"] += 1
+            continue
+        item = {"nome": nome or "(sem nome)", "telefone": telefone, "status_atual": status or "(vazio)"}
+        if not nome or not telefone:
+            item["resultado"] = "PULA — dados incompletos"
+            resumo["sem_dados"] += 1
+            simulacao.append(item)
+            continue
+        try:
+            pais = descobrir_pais_por_telefone(telefone)
+            item["pais"] = pais
+            dentro = esta_no_horario_comercial(pais)
+            item["horario_comercial"] = bool(dentro)
+            if not dentro:
+                item["resultado"] = f"PULA — fora do horário comercial de {pais}"
+                resumo["fora_horario"] += 1
+                simulacao.append(item)
+                continue
+            telefone_fmt = formatar_telefone(telefone)
+            item["telefone_formatado"] = telefone_fmt
+            try:
+                if cliente_ja_tem_reserva(telefone_fmt):
+                    item["resultado"] = "PULA — já tem reserva ativa na HQ"
+                    resumo["tem_reserva"] += 1
+                    simulacao.append(item)
+                    continue
+            except Exception as e:
+                item["aviso_reserva"] = f"{type(e).__name__}: {e}"
+                resumo["erro_checagem"] += 1
+            lang = _idioma_por_pais(pais)
+            item["idioma"] = lang
+            item["template_sid"] = (_template_sid(lang) or "(NÃO CONFIGURADO)")
+            item["canal"] = "email+SMS (EUA)" if (pais or "").strip().lower() in PAISES_USA else "WhatsApp"
+            item["resultado"] = "ENVIARIA ✅"
+            resumo["enviaria"] += 1
+        except Exception as e:
+            item["resultado"] = f"ERRO na simulação: {type(e).__name__}: {e}"
+        simulacao.append(item)
+    out["resumo"] = resumo
+    out["pendentes"] = simulacao[:40]
+
+    # ---- 3. Config de envio ----
+    out["config"] = {
+        "TWILIO_WHATSAPP_NUMBER": TWILIO_WHATSAPP_NUMBER,
+        "template_br": AGENT_TEMPLATE_SID_BR or "(vazio)",
+        "template_es": AGENT_TEMPLATE_SID_ES or "(vazio)",
+        "TRACK_TEMPLATE_LINK": TRACK_TEMPLATE_LINK,
+        "TRACK_BASE_URL": TRACK_BASE_URL,
+    }
+
+    # ---- 4. Twilio: conta e últimas mensagens (com erros) ----
+    try:
+        acc = twilio_client.api.accounts(TWILIO_ACCOUNT_SID).fetch()
+        out["twilio_conta"] = {"status": acc.status, "type": acc.type}
+    except Exception as e:
+        out["twilio_conta"] = {"erro": f"{type(e).__name__}: {e}"}
+    try:
+        msgs = twilio_client.messages.list(limit=15)
+        out["twilio_ultimas_mensagens"] = [{
+            "data": (m.date_created.isoformat() if m.date_created else None),
+            "para": (m.to or "")[-6:],
+            "status": m.status,
+            "erro": m.error_code,
+            "msg_erro": (m.error_message or "")[:120],
+        } for m in msgs]
+    except Exception as e:
+        out["twilio_ultimas_mensagens"] = {"erro": f"{type(e).__name__}: {e}"}
+
+    # ---- 5. Verificação dos templates configurados ----
+    checagem = {}
+    for rot, sid in (("br", AGENT_TEMPLATE_SID_BR), ("es", AGENT_TEMPLATE_SID_ES)):
+        if not sid:
+            checagem[rot] = "(não configurado)"
+            continue
+        try:
+            c = twilio_client.content.v1.contents(sid).fetch()
+            checagem[rot] = {"nome": c.friendly_name, "idioma": c.language,
+                             "variaveis": list((c.variables or {}).keys())}
+        except Exception as e:
+            checagem[rot] = {"erro": f"{type(e).__name__}: {e}"}
+    out["twilio_templates"] = checagem
+    return out, 200
+
+
 def _disparar_leads_agente():
     """
     Lê os leads da planilha e dispara o template do agente — com a MESMA
