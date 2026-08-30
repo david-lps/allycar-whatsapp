@@ -85,6 +85,30 @@ _ALLYCAR_LINK_RE = re.compile(r'(?:https?://)?(?:www\.)?allycar\.com(?:/[^\s]*)?
 TRACK_TEMPLATE_LINK = (os.getenv("TRACK_TEMPLATE_LINK", "") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _telefone_utilizavel(bruto):
+    """
+    Normaliza e valida o telefone da planilha ANTES de chamar o Twilio.
+    Retorna (telefone_e164, None) se der para usar, ou (None, motivo) se não.
+
+    Motivo de existir: valores como "----" (linhas de Cadastro Site) viravam
+    'whatsapp:+' — número vazio — e o Twilio rejeitava com o erro 21211, além de
+    consumir o tempo do disparo. Também conserta o prefixo duplicado
+    ("+55 +5583996016668" -> "+5583996016668").
+    """
+    txt = str(bruto or "").strip()
+    if not txt:
+        return None, "telefone vazio"
+    # Prefixo duplicado: vale o trecho a partir do ÚLTIMO '+'
+    if txt.count("+") > 1:
+        txt = "+" + txt.rsplit("+", 1)[-1]
+    digitos = "".join(c for c in txt if c.isdigit())
+    if not digitos:
+        return None, f"telefone inválido ({txt[:20]})"
+    if len(digitos) < 8 or len(digitos) > 15:   # E.164 vai até 15 dígitos
+        return None, f"telefone com {len(digitos)} dígitos ({txt[:20]})"
+    return "+" + digitos, None
+
+
 def _nova_conversa_inicial(name, phone, language):
     """Estado inicial da conversa, já com um código de rastreio embutido."""
     return {
@@ -669,6 +693,13 @@ def health_disparo():
             resumo["sem_dados"] += 1
             simulacao.append(item)
             continue
+        tel_ok, motivo_tel = _telefone_utilizavel(telefone)
+        if not tel_ok:
+            item["resultado"] = f"PULA — {motivo_tel} (não chama o Twilio)"
+            resumo["telefone_invalido"] = resumo.get("telefone_invalido", 0) + 1
+            simulacao.append(item)
+            continue
+        item["telefone_normalizado"] = tel_ok
         try:
             pais = descobrir_pais_por_telefone(telefone)
             item["pais"] = pais
@@ -745,6 +776,21 @@ def health_disparo():
     return out, 200
 
 
+def _marcar_status(sheet, idx, col, valor):
+    """Escreve o STATUS na planilha sem deixar um erro do Google derrubar o disparo.
+
+    Antes, um update_cell fora de try (ou dentro de um except) fazia a exceção
+    subir pelo loop e abortar a rodada INTEIRA — todos os leads seguintes ficavam
+    sem ser processados. Agora a falha é registrada e o disparo continua.
+    """
+    try:
+        sheet.update_cell(idx, col, valor)
+        return True
+    except Exception as e:
+        print(f"⚠️ [agente] não consegui gravar STATUS na linha {idx} ({valor!r}): {e}")
+        return False
+
+
 def _disparar_leads_agente():
     """
     Lê os leads da planilha e dispara o template do agente — com a MESMA
@@ -768,8 +814,17 @@ def _disparar_leads_agente():
             pulados += 1
             continue
         if not nome or not telefone:
-            sheet.update_cell(idx, col_status, "Error - dados incompletos")
+            _marcar_status(sheet, idx, col_status, "Error - dados incompletos")
             erros += 1
+            continue
+
+        # Valida o telefone ANTES de gastar tempo com HQ/Twilio: números como
+        # "----" viravam 'whatsapp:+' e o Twilio rejeitava (erro 21211).
+        tel_ok, motivo = _telefone_utilizavel(telefone)
+        if not tel_ok:
+            _marcar_status(sheet, idx, col_status, f"Error - {motivo}")
+            erros += 1
+            print(f"📵 [agente] {nome}: {motivo} — pulado sem chamar o Twilio")
             continue
 
         pais = descobrir_pais_por_telefone(telefone)
@@ -778,10 +833,10 @@ def _disparar_leads_agente():
             pulados += 1
             continue
 
-        telefone_fmt = formatar_telefone(telefone)  # whatsapp:+...
+        telefone_fmt = f"whatsapp:{tel_ok}"  # já normalizado e validado acima
         try:
             if cliente_ja_tem_reserva(telefone_fmt):
-                sheet.update_cell(idx, col_status, "Skipped - já tem reserva")
+                _marcar_status(sheet, idx, col_status, "Skipped - já tem reserva")
                 pulados += 1
                 continue
         except Exception as e:
@@ -795,14 +850,14 @@ def _disparar_leads_agente():
                     telefone_fmt, nome, pais, email_cliente
                 )
                 if sucesso:
-                    sheet.update_cell(idx, col_status, "Sent")
+                    _marcar_status(sheet, idx, col_status, "Sent")
                     enviados += 1
                     print(f"✅ [agente/EUA] email+SMS para {nome}")
                 else:
-                    sheet.update_cell(idx, col_status, f"Error: {str(resultado)[:80]}")
+                    _marcar_status(sheet, idx, col_status, f"Error: {str(resultado)[:80]}")
                     erros += 1
             except Exception as e:
-                sheet.update_cell(idx, col_status, f"Error: {str(e)[:80]}")
+                _marcar_status(sheet, idx, col_status, f"Error: {str(e)[:80]}")
                 erros += 1
             time.sleep(2)
             continue
@@ -811,7 +866,7 @@ def _disparar_leads_agente():
         language = _idioma_por_pais(pais)
         sid = _template_sid(language)
         if not sid:
-            sheet.update_cell(idx, col_status, f"Error - sem template {language}")
+            _marcar_status(sheet, idx, col_status, f"Error - sem template {language}")
             erros += 1
             continue
 
@@ -819,11 +874,11 @@ def _disparar_leads_agente():
         try:
             _enviar_template(telefone_fmt, sid, nome, conversa["ref_code"])
             agent_store.salvar(telefone_fmt, conversa)
-            sheet.update_cell(idx, col_status, "Sent")
+            _marcar_status(sheet, idx, col_status, "Sent")
             enviados += 1
             print(f"✅ [agente] enviado para {nome} ({telefone_fmt}) [{language}]")
         except Exception as e:
-            sheet.update_cell(idx, col_status, f"Error: {str(e)[:80]}")
+            _marcar_status(sheet, idx, col_status, f"Error: {str(e)[:80]}")
             erros += 1
         time.sleep(2)  # respeita limites do Twilio
 
