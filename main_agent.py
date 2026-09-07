@@ -46,6 +46,22 @@ HQ_PICKUP_LOCATION = os.getenv("HQ_PICKUP_LOCATION", "3")  # Orlando MCO
 CAR_RENTAL_SURCHARGE_DIA = 2.0   # USD por diária (Car rental surcharge)
 SALES_TAX = 0.065                # 6,5% sobre (base + surcharge)
 
+# ---- Fechamento da reserva pelo próprio WhatsApp (self-checkout) ----
+# Desligado por padrão: ative com AGENT_CHECKOUT=1 depois de testar.
+AGENT_CHECKOUT = (os.getenv("AGENT_CHECKOUT", "") or "").strip().lower() in ("1", "true", "yes", "on")
+# Os endpoints da HQ (criar contato/reserva + link de pagamento) vivem no serviço de
+# PRODUÇÃO. O agente os chama por HTTP para não duplicar código que mexe com dinheiro.
+PROD_API_BASE = os.getenv("PROD_API_BASE", "https://allycar-whatsapp-production.up.railway.app").rstrip("/")
+SITE_PAGAMENTO_BR = os.getenv("SITE_PAGAMENTO_BR", "https://allycar.com/pagar-braza.html")
+
+# IDs das cobranças extras na HQ (informados pela operação)
+ITENS_BEBE = {
+    "baby_seat":       {"id": 10, "label": "Baby Seat (bebê conforto)"},
+    "child_seat":      {"id": 9,  "label": "Child Seat (cadeirinha)"},
+    "single_stroller": {"id": 16, "label": "Carrinho simples"},
+    "double_stroller": {"id": 17, "label": "Carrinho duplo"},
+}
+
 client = anthropic.Anthropic()  # lê ANTHROPIC_API_KEY do ambiente
 
 
@@ -282,11 +298,23 @@ FLUXO (conduza nesta ordem):
   memorável que a família merece, sem correr o risco de ficar sem a melhor opção. NUNCA mencione
   "sinal reembolsável" nem "cancelamento em 48h". Reforce SEM CAUÇÃO e o pagamento (cartão de
   crédito/débito; Brasil também PIX e até 12×). Pergunte "reservo pra você?".
-- S5 RESERVA: quando o cliente ACEITAR, o caminho ideal é fechar PELO SITE allycar.com, onde
-  ele conclui a reserva na hora. Reforce que, cadastrando o email no site, ele recebe um cupom
-  de 5% por email para usar na PRIMEIRA reserva online. Envie o link e incentive esse caminho.
-  Se o cliente preferir finalizar por aqui (WhatsApp) ou quiser ajuda humana, use
-  acionar_consultor_pagamento (um consultor assume). NUNCA peça número de cartão no chat.
+- S5 RESERVA: quando o cliente ACEITAR, você pode FECHAR NA HORA, aqui mesmo. Não mande ele
+  esperar consultor — o "sim" tem prazo de validade. Peça os dados que faltam de uma vez, de
+  forma leve e organizada (uma mensagem só, em lista curta):
+    • nome completo  • email  • data de nascimento  • número da CNH (e a FOTO da CNH)
+    • endereço completo  • confirmar datas E horários de retirada/devolução
+    • confirmar o modelo  • quais itens de bebê precisa (bebê conforto, cadeirinha,
+      carrinho simples ou duplo — todos INCLUSOS, sem custo)
+  Explique que é rapidinho e que é o necessário para emitir a reserva. Quando tiver TUDO,
+  chame fechar_reserva e envie ao cliente o LINK DE PAGAMENTO que a ferramenta devolver,
+  exatamente como veio. Diga que a reserva fica garantida assim que o pagamento for confirmado.
+  PAGAMENTO: cliente no BRASIL que pedir PIX ou parcelamento → pagamento="pix_ou_parcelado";
+  em qualquer outro caso → pagamento="stripe".
+  NUNCA peça número de cartão, CVV ou senha no chat — o pagamento é sempre pelo link.
+  Se faltar algum dado, PERGUNTE; nunca invente. Se a ferramenta falhar, ou se o cliente
+  preferir falar com uma pessoa, use acionar_consultor_pagamento.
+  Se ele preferir fechar sozinho pelo site, tudo bem: allycar.com, lembrando do cupom de 5%
+  por cadastrar o email lá.
 
 SINAL DE INTENÇÃO (importante para o time): assim que o cliente, DEPOIS de ver o preço/opções,
 demonstrar que quer alugar (ex: "gostei", "quero", "ok", "perfeito", "como faço pra pagar",
@@ -379,6 +407,46 @@ TOOLS = [
         },
     },
     {
+        "name": "fechar_reserva",
+        "description": (
+            "FECHA a reserva na hora e devolve o LINK DE PAGAMENTO, sem esperar consultor. "
+            "Use quando o cliente JÁ ACEITOU reservar e você tem TODOS os dados abaixo. "
+            "Se faltar qualquer um, PERGUNTE antes — nunca invente nem deixe em branco. "
+            "A reserva nasce AGUARDANDO PAGAMENTO (não é cobrança) e pode ser cancelada. "
+            "NUNCA peça número de cartão: o cliente paga pelo link."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "primeiro_nome": {"type": "string"},
+                "sobrenome": {"type": "string"},
+                "email": {"type": "string"},
+                "nascimento": {"type": "string", "description": "yyyy-mm-dd (confirma os 25 anos)"},
+                "cnh": {"type": "string", "description": "número da habilitação"},
+                "endereco": {"type": "string", "description": "endereço completo do cliente"},
+                "modelo": {"type": "string", "description": "modelo EXATO já acordado"},
+                "data_retirada": {"type": "string", "description": "yyyy-mm-dd"},
+                "data_devolucao": {"type": "string", "description": "yyyy-mm-dd"},
+                "hora_retirada": {"type": "string", "description": "HH:MM"},
+                "hora_devolucao": {"type": "string", "description": "HH:MM"},
+                "itens_bebe": {
+                    "type": "array",
+                    "description": "Itens de bebê confirmados COM o cliente (inclusos, sem custo)",
+                    "items": {"type": "string",
+                              "enum": ["baby_seat", "child_seat", "single_stroller", "double_stroller"]},
+                },
+                "pagamento": {
+                    "type": "string",
+                    "enum": ["stripe", "pix_ou_parcelado"],
+                    "description": "pix_ou_parcelado APENAS para cliente no Brasil que pediu PIX ou parcelamento; nos demais casos stripe",
+                },
+            },
+            "required": ["primeiro_nome", "sobrenome", "email", "nascimento", "cnh",
+                         "modelo", "data_retirada", "data_devolucao", "pagamento"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "acionar_consultor_transfer",
         "description": (
             "Use quando o cliente quiser SEGUIR com o serviço de TRANSFER (transporte com "
@@ -457,6 +525,11 @@ TOOLS = [
         },
     },
 ]
+
+# Com o self-checkout desligado, a ferramenta nem é oferecida ao modelo — assim ele
+# segue usando acionar_consultor_pagamento em vez de tentar algo indisponível.
+if not AGENT_CHECKOUT:
+    TOOLS = [t for t in TOOLS if t["name"] != "fechar_reserva"]
 
 
 # ----- implementações das ferramentas -----
@@ -613,6 +686,149 @@ def _calcular_total_com_impostos(total_base_usd, data_retirada=None, data_devolu
     }
 
 
+def _classe_id_por_modelo(modelo):
+    """Descobre o vehicle_class_id da HQ a partir do nome do modelo."""
+    import requests
+    alvo = (modelo or "").strip().lower()
+    if not alvo:
+        return None, None
+    try:
+        r = requests.get(
+            f"{HQ_API_HOST}/api-america-miami/fleets/vehicle-classes",
+            params={"limit": 200},
+            headers={"Authorization": HQ_API_AUTH, "Accept": "application/json"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        classes = r.json().get("fleets_vehicle_classes", [])
+    except Exception as e:
+        print(f"⚠️ [checkout] não consegui listar vehicle-classes: {e}")
+        return None, None
+    import re
+    def toks(s):
+        return set(re.findall(r"[a-z0-9]+", (s or "").lower()))
+
+    # 1) match exato
+    for c in classes:
+        if (c.get("name") or "").strip().lower() == alvo:
+            return c.get("id"), c.get("name")
+    # 2) um contém o outro como texto
+    for c in classes:
+        nome_c = (c.get("name") or "").strip().lower()
+        if nome_c and (nome_c in alvo or alvo in nome_c):
+            return c.get("id"), c.get("name")
+    # 3) por palavras — resolve "Tesla Model Y" (nosso nome) x "Tesla Y" (nome na HQ).
+    #    Exige 2+ palavras em comum para não casar por acaso.
+    ta, melhor = toks(alvo), None
+    for c in classes:
+        tc = toks(c.get("name"))
+        if len(tc) >= 2 and (tc <= ta or ta <= tc):
+            if melhor is None or len(toks(melhor[1])) < len(tc):
+                melhor = (c.get("id"), c.get("name"))
+    return melhor if melhor else (None, None)
+
+
+def _fechar_reserva(conversa, **d):
+    """
+    Cria o contato e a reserva na HQ e devolve o LINK DE PAGAMENTO.
+    A reserva nasce AGUARDANDO PAGAMENTO — não é cobrança, e pode ser cancelada.
+    Nunca coleta cartão: o cliente paga pelo link (Stripe) ou pela página do PIX.
+    """
+    import requests
+    if not AGENT_CHECKOUT:
+        return {"status": "indisponivel",
+                "instrucao": "O fechamento automático está desligado. Use acionar_consultor_pagamento."}
+
+    modelo = d.get("modelo") or conversa.get("modelo_interesse") or ""
+    class_id, nome_classe = _classe_id_por_modelo(modelo)
+    if not class_id:
+        return {"status": "erro",
+                "instrucao": (f"Não identifiquei o modelo '{modelo}' na frota. Confirme com o cliente "
+                              "qual carro exatamente ele quer e tente de novo.")}
+
+    itens = [i for i in (d.get("itens_bebe") or []) if i in ITENS_BEBE]
+    charges = [ITENS_BEBE[i]["id"] for i in itens]
+
+    base = {
+        "rental": True,                      # <- não force a van do Sunny Storage
+        "brand_id": HQ_BRAND_ID,
+        "pick_up_location": HQ_PICKUP_LOCATION,
+        "vehicle_class_id": class_id,
+        "pick_up_date": d.get("data_retirada"),
+        "return_date": d.get("data_devolucao"),
+    }
+    contato = dict(base, **{
+        "first_name": d.get("primeiro_nome", ""),
+        "last_name": d.get("sobrenome", ""),
+        "email": d.get("email", ""),
+        "phone_number": conversa.get("phone", ""),
+        "birthdate": d.get("nascimento", ""),
+        "license_number": d.get("cnh", ""),
+    })
+    try:
+        r = requests.post(f"{PROD_API_BASE}/api/hq/create-contact", json=contato, timeout=40)
+        cid = ((r.json() or {}).get("contact") or {}).get("id")
+    except Exception as e:
+        print(f"❌ [checkout] create-contact falhou: {e}")
+        return {"status": "erro", "instrucao": "Não consegui criar o cadastro agora. Use acionar_consultor_pagamento."}
+    if not cid:
+        print(f"❌ [checkout] sem contact_id: {r.text[:300]}")
+        return {"status": "erro", "instrucao": "O cadastro do cliente não foi aceito. Use acionar_consultor_pagamento."}
+
+    reserva = dict(base, **{
+        "pick_up_time": _hora_valida(d.get("hora_retirada")),
+        "return_time": _hora_valida(d.get("hora_devolucao")),
+        "customer_id": cid,
+        "customer_first_name": d.get("primeiro_nome", ""),
+        "customer_last_name": d.get("sobrenome", ""),
+        "customer_email": d.get("email", ""),
+        "customer_birthdate": d.get("nascimento", ""),
+        "customer_driver_license_number": d.get("cnh", ""),
+        "additional_charges": charges,
+    })
+    try:
+        r2 = requests.post(f"{PROD_API_BASE}/api/hq/create-reservation", json=reserva, timeout=60)
+        j2 = r2.json() or {}
+    except Exception as e:
+        print(f"❌ [checkout] create-reservation falhou: {e}")
+        return {"status": "erro", "instrucao": "Não consegui criar a reserva agora. Use acionar_consultor_pagamento."}
+
+    dados = j2.get("data") or {}
+    reserva_id = (dados.get("reservation") or {}).get("id") or dados.get("id") or j2.get("reservation_id")
+    link = (j2.get("payment_link")
+            or (dados.get("transaction") or {}).get("payment_link")
+            or dados.get("payment_link"))
+
+    # Caminho do PIX/parcelamento (só Brasil): a página cuida de CPF e endereço
+    quer_br = str(d.get("pagamento") or "").lower() in ("pix", "pix_ou_parcelado", "parcelado", "braza")
+    if quer_br and reserva_id:
+        link = f"{SITE_PAGAMENTO_BR}?order={reserva_id}&method=pix"
+
+    conversa["reservou"] = True
+    conversa["escalar"] = True          # equipe recebe o email com a conversa
+    conversa["reserva_hq_id"] = reserva_id
+    conversa["reserva_link"] = link
+    conversa["reserva_itens"] = [ITENS_BEBE[i]["label"] for i in itens]
+    conversa["motivo_escalonamento"] = (
+        f"RESERVA CRIADA PELO AGENTE — HQ #{reserva_id} · {nome_classe} · "
+        f"{d.get('data_retirada')} a {d.get('data_devolucao')} · aguardando pagamento. "
+        f"CNH {d.get('cnh')} · endereço: {d.get('endereco','(não informado)')}"
+    )
+
+    if not link:
+        return {"status": "reserva_criada_sem_link", "reserva": reserva_id,
+                "instrucao": ("A reserva foi criada, mas o link de pagamento não veio. Avise o cliente "
+                              "com tranquilidade que um consultor manda o link em instantes.")}
+    return {
+        "status": "ok", "reserva": reserva_id, "veiculo": nome_classe, "link_pagamento": link,
+        "itens": [ITENS_BEBE[i]["label"] for i in itens],
+        "instrucao": ("Reserva criada e AGUARDANDO PAGAMENTO. Mande o link de pagamento ao cliente "
+                      "exatamente como veio, diga que a reserva fica garantida assim que o pagamento "
+                      "for confirmado, e que ele pode chamar aqui se tiver qualquer dúvida. "
+                      "NÃO peça dados de cartão no chat."),
+    }
+
+
 def _executar_ferramenta(nome, entrada, conversa):
     if nome == "recomendar_veiculo":
         return _recomendar_veiculo(**entrada), {}
@@ -628,6 +844,9 @@ def _executar_ferramenta(nome, entrada, conversa):
         return {"status": "consultor_acionado",
                 "instrucao": ("Um consultor humano vai finalizar a reserva e o pagamento com o cliente. "
                               "Avise o cliente de forma calorosa que o consultor já vai assumir; NÃO envie link nem peça cartão.")}, {"reservou": True, "escalar": True}
+    if nome == "fechar_reserva":
+        r = _fechar_reserva(conversa, **entrada)
+        return r, ({"reservou": True, "escalar": True} if r.get("status") == "ok" else {})
     if nome == "acionar_consultor_transfer":
         conversa["escalar"] = True
         conversa["transfer"] = True

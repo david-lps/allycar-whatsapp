@@ -1027,7 +1027,17 @@ SUNNY_BRAND_ID         = os.getenv("SUNNY_BRAND_ID", "1")
 SUNNY_LOCATION_ID      = os.getenv("SUNNY_LOCATION_ID", "5")
 
 def _sunny_forced(data, rota):
-    """Devolve (brand_id, location_id, vehicle_class_id) forçados e loga tentativa de troca."""
+    """Devolve (brand_id, location_id, vehicle_class_id) forçados e loga tentativa de troca.
+
+    EXCEÇÃO: chamadas do agente de vendas mandam rental=true. Aí é aluguel normal e o
+    veículo ESCOLHIDO PELO CLIENTE é o que vale — forçar a van do Sunny criaria a reserva
+    com o carro errado. O padrão (sem rental) segue forçando, para a landing do Sunny
+    Storage continuar funcionando exatamente como antes.
+    """
+    if data.get('rental'):
+        return (str(data.get('brand_id') or '1'),
+                str(data.get('pick_up_location') or '3'),
+                str(data.get('vehicle_class_id') or ''))
     enviado = str(data.get('vehicle_class_id') or '')
     if enviado and enviado != str(SUNNY_VEHICLE_CLASS_ID):
         print(f"⚠️ [{rota}] vehicle_class_id do cliente ({enviado}) IGNORADO — forçando {SUNNY_VEHICLE_CLASS_ID}")
@@ -1174,7 +1184,8 @@ def hq_create_reservation():
             'customer_email':                 data.get('customer_email'),
             'customer_birthdate':             data.get('customer_birthdate'),
             'customer_driver_license_number': data.get('customer_driver_license_number'),
-            'additional_charges[]':           '',
+            # Lista de cobranças extras (ex.: cadeirinhas e carrinhos). Vazio = nenhuma.
+            'additional_charges[]':           data.get('additional_charges') or '',
             # Self-service: pedimos à HQ o link de pagamento (Stripe) junto da reserva.
             # A reserva nasce aguardando pagamento; a própria HQ cancela se não for paga.
             'return_payment_link':            'true',

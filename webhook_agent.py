@@ -522,7 +522,7 @@ Motivo: {conversa.get('motivo_escalonamento', '')}
 
 
 # ------- processamento assíncrono (thread de fundo) -------
-def _processar(from_number, body):
+def _processar(from_number, body, midias=None):
     try:
         key, conversa = _encontrar_conversa(from_number)
         if conversa is None:
@@ -531,6 +531,12 @@ def _processar(from_number, body):
 
         # Marca a hora da última mensagem DO CLIENTE (abre/renova a janela de 24h)
         conversa["ultima_msg_cliente"] = datetime.now(timezone.utc).isoformat()
+
+        # Anexos (CNH): guardamos a referência do Twilio para a equipe anexar no cadastro.
+        # Documento é dado sensível — fica só a URL protegida do Twilio, nada é copiado.
+        if midias:
+            conversa.setdefault("anexos", []).extend(
+                [{"ts": conversa["ultima_msg_cliente"], **m} for m in midias])
 
         # Modo humano: um consultor assumiu — o agente NÃO responde automaticamente.
         if conversa.get("humano"):
@@ -588,10 +594,23 @@ def webhook_agent():
     if button_payload:
         body = button_payload
 
-    print(f"📥 [agente] mensagem de {from_number}: {body}")
+    # Anexos (ex.: foto da CNH). Guardamos a URL do Twilio e avisamos o agente por texto,
+    # para ele confirmar o recebimento e seguir pedindo o que falta.
+    midias = []
+    try:
+        for i in range(int(request.form.get("NumMedia", "0") or 0)):
+            url = request.form.get(f"MediaUrl{i}")
+            if url:
+                midias.append({"url": url, "tipo": request.form.get(f"MediaContentType{i}", "")})
+    except (TypeError, ValueError):
+        pass
+    if midias:
+        body = (body + "\n" if body else "") + f"[o cliente enviou {len(midias)} anexo(s) — provavelmente a CNH]"
+
+    print(f"📥 [agente] mensagem de {from_number}: {body}{' +' + str(len(midias)) + ' mídia' if midias else ''}")
 
     if from_number and body:
-        threading.Thread(target=_processar, args=(from_number, body), daemon=True).start()
+        threading.Thread(target=_processar, args=(from_number, body, midias), daemon=True).start()
 
     # Ack imediato (a resposta real vai pela API REST, na thread de fundo)
     return ("", 204)
