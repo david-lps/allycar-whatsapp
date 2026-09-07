@@ -1115,10 +1115,16 @@ def hq_create_contact():
         except Exception:
             resp_json = {'error': resp_text}
  
-        # Normaliza retorno para { contact: { id: X } }
+        # Normaliza retorno para { contact: { id: X } }.
+        # A HQ devolve o id do cliente em data.customer.id (e também em
+        # data.reservation.customer_id). NÃO existe data.contact_id aqui — mesma
+        # correção já aplicada em /api/transfer/customer.
+        _data = resp_json.get('data') or {}
         contact_id = (
-            resp_json.get('data', {}).get('contact_id') or
-            resp_json.get('contact', {}).get('id') if resp_json.get('contact') else None
+            (_data.get('customer') or {}).get('id')
+            or (_data.get('reservation') or {}).get('customer_id')
+            or _data.get('contact_id')
+            or (resp_json.get('contact') or {}).get('id')
         )
  
         if contact_id:
