@@ -1197,7 +1197,9 @@ def hq_create_reservation():
             'return_time':                    data.get('return_time'),
             'brand_id':                       _s_brand,
             'pick_up_location':               _s_loc,
-            'return_location':                _s_loc,
+            # No aluguel o cliente pode devolver em outro ponto (aeroporto, escritório
+            # ou o endereço dele). Fora do aluguel, devolve onde retirou, como antes.
+            'return_location':                (data.get('return_location') if data.get('rental') else None) or _s_loc,
             'vehicle_class_id':               _s_class,
             'customer_id':                    data.get('customer_id'),
             'customer_first_name':            data.get('customer_first_name'),

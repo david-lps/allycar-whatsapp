@@ -54,6 +54,13 @@ AGENT_CHECKOUT = (os.getenv("AGENT_CHECKOUT", "") or "").strip().lower() in ("1"
 PROD_API_BASE = os.getenv("PROD_API_BASE", "https://allycar-whatsapp-production.up.railway.app").rstrip("/")
 SITE_PAGAMENTO_BR = os.getenv("SITE_PAGAMENTO_BR", "https://allycar.com/pagar-braza.html")
 
+# Locais de retirada/devolução cadastrados na HQ
+LOCAIS_HQ = {
+    "aeroporto":    {"id": 3, "label": "Aeroporto de Orlando (MCO)"},
+    "orlando_area": {"id": 6, "label": "Onde você estiver em Orlando (raio de 30 milhas)"},
+    "escritorio":   {"id": 2, "label": "Nosso escritório — 1900 33rd St, Orlando, FL 32839"},
+}
+
 # IDs das cobranças extras na HQ (informados pela operação)
 ITENS_BEBE = {
     "baby_seat":       {"id": 10, "label": "Baby Seat (bebê conforto)"},
@@ -254,6 +261,16 @@ HORÁRIOS, TOLERÂNCIA E IMPOSTOS (regras da casa — siga à risca):
   calcular_total_com_impostos conta os dias de calendário sozinha quando você passa as DATAS.
 - SALES TAX (6,5%): incide sobre a soma das diárias + o total do Car rental surcharge.
 
+LOCAIS DE RETIRADA E DEVOLUÇÃO — sempre pergunte antes de fechar a reserva. Ofereça estas
+TRÊS opções (e só estas), deixando claro que atendemos Orlando e um raio de até 30 milhas:
+  1. Aeroporto de Orlando (MCO)  → local_retirada/local_devolucao = "aeroporto"
+  2. Onde você estiver em Orlando, no raio de 30 milhas → "orlando_area"
+     (entrega e retirada por motorista nosso; se ele escolher esta, diga que um consultor
+      confirma o endereço exato logo depois da reserva — NÃO precisa do endereço agora)
+  3. Nosso escritório: 1900 33rd St, Orlando, FL 32839 → "escritorio"
+Pergunte os DOIS (pode retirar num lugar e devolver em outro — é permitido). Aproveite para
+lembrar, uma vez e com leveza, que o veículo circula dentro da Flórida.
+
 CIRCULAÇÃO — NÃO SAIR DO ESTADO: o veículo não pode sair do estado da Flórida. Ao APRESENTAR
 as opções de reserva (com preço), inclua esse aviso de forma leve e natural, como uma condição
 do aluguel — apenas para o cliente saber, sem alarde e sem transformar em objeção. Uma linha
@@ -307,6 +324,7 @@ FLUXO (conduza nesta ordem):
     • nome completo  • email  • data de nascimento  • número da CNH (e a FOTO da CNH)
     • endereço completo: rua, número, cidade, estado, CEP e país
     • confirmar datas E horários de retirada/devolução
+    • ONDE RETIRAR e ONDE DEVOLVER o carro (ver a regra de LOCAIS logo abaixo)
     • confirmar o modelo  • quais itens de bebê precisa (bebê conforto, cadeirinha,
       carrinho simples ou duplo — todos INCLUSOS, sem custo)
   Explique que é rapidinho e que é o necessário para emitir a reserva. Quando tiver TUDO,
@@ -444,6 +462,16 @@ TOOLS = [
                     "items": {"type": "string",
                               "enum": ["baby_seat", "child_seat", "single_stroller", "double_stroller"]},
                 },
+                "local_retirada": {
+                    "type": "string",
+                    "enum": ["aeroporto", "orlando_area", "escritorio"],
+                    "description": "onde o cliente RETIRA o carro (confirmado com ele)",
+                },
+                "local_devolucao": {
+                    "type": "string",
+                    "enum": ["aeroporto", "orlando_area", "escritorio"],
+                    "description": "onde o cliente DEVOLVE o carro (pode ser diferente da retirada)",
+                },
                 "pagamento": {
                     "type": "string",
                     "enum": ["stripe", "pix_ou_parcelado"],
@@ -451,7 +479,8 @@ TOOLS = [
                 },
             },
             "required": ["primeiro_nome", "sobrenome", "email", "nascimento", "cnh",
-                         "modelo", "data_retirada", "data_devolucao", "pagamento"],
+                         "modelo", "data_retirada", "data_devolucao", "pagamento",
+                         "local_retirada", "local_devolucao"],
             "additionalProperties": False,
         },
     },
@@ -758,10 +787,13 @@ def _fechar_reserva(conversa, **d):
     itens = [i for i in (d.get("itens_bebe") or []) if i in ITENS_BEBE]
     charges = [ITENS_BEBE[i]["id"] for i in itens]
 
+    ret = LOCAIS_HQ.get(d.get("local_retirada") or "", LOCAIS_HQ["aeroporto"])
+    dev = LOCAIS_HQ.get(d.get("local_devolucao") or "", ret)
     base = {
         "rental": True,                      # <- não force a van do Sunny Storage
         "brand_id": HQ_BRAND_ID,
-        "pick_up_location": HQ_PICKUP_LOCATION,
+        "pick_up_location": ret["id"],
+        "return_location": dev["id"],
         "vehicle_class_id": class_id,
         "pick_up_date": d.get("data_retirada"),
         "return_date": d.get("data_devolucao"),
@@ -832,13 +864,17 @@ def _fechar_reserva(conversa, **d):
     conversa["reserva_hq_id"] = reserva_id
     conversa["reserva_link"] = link
     conversa["reserva_itens"] = [ITENS_BEBE[i]["label"] for i in itens]
+    conversa["reserva_locais"] = f"{ret['label']} → {dev['label']}"
     conversa["motivo_escalonamento"] = (
         f"RESERVA CRIADA PELO AGENTE — HQ #{reserva_id} · {nome_classe} · "
-        f"{d.get('data_retirada')} a {d.get('data_devolucao')} · aguardando pagamento. "
-        f"CNH {d.get('cnh')} · endereço: {d.get('endereco_rua','')} {d.get('endereco_numero','')}, "
-        f"{d.get('endereco_cidade','')}/{d.get('endereco_estado','')} {d.get('endereco_cep','')} "
-        f"{(d.get('endereco_pais','') or '').upper()}"
-        f"{' · CNH anexada' if foto_cnh else ' · SEM foto da CNH'}"
+        f"{d.get('data_retirada')} a {d.get('data_devolucao')} · aguardando pagamento.\n"
+        f"Retirada: {ret['label']}\nDevolução: {dev['label']}\n"
+        + ("⚠️ ENTREGA/RETIRADA NO ENDEREÇO DO CLIENTE — confirmar o endereço exato com ele.\n"
+           if 6 in (ret["id"], dev["id"]) else "")
+        + f"CNH {d.get('cnh')} · endereço: {d.get('endereco_rua','')} {d.get('endereco_numero','')}, "
+          f"{d.get('endereco_cidade','')}/{d.get('endereco_estado','')} {d.get('endereco_cep','')} "
+          f"{(d.get('endereco_pais','') or '').upper()}"
+          f"{' · CNH anexada no e-mail' if foto_cnh else ' · SEM foto da CNH'}"
     )
 
     if not link:
