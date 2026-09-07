@@ -109,6 +109,23 @@ def _telefone_utilizavel(bruto):
     return "+" + digitos, None
 
 
+def _preservar_conversa(nova, telefone_fmt):
+    """Mescla com a conversa que já existe, NUNCA descartando o histórico.
+
+    O disparo e o /enviar-inicial montavam um estado zerado e salvavam por cima.
+    Se o lead já estivesse conversando, a memória inteira sumia e o agente voltava
+    a fazer as perguntas iniciais no meio da negociação. Aqui a conversa viva
+    sempre vence: devolve (conversa, key, ja_conversava).
+    """
+    key, atual = _encontrar_conversa(telefone_fmt)   # tolera variações do número
+    if not atual:
+        return nova, telefone_fmt, False
+    atual["name"] = nova.get("name") or atual.get("name")
+    atual["language"] = nova.get("language") or atual.get("language")
+    atual.setdefault("ref_code", nova.get("ref_code"))
+    return atual, key, bool(atual.get("history"))
+
+
 def _nova_conversa_inicial(name, phone, language):
     """Estado inicial da conversa, já com um código de rastreio embutido."""
     return {
@@ -662,13 +679,20 @@ def enviar_inicial():
 
     to = formatar_telefone(phone)  # whatsapp:+...
     conversa = _nova_conversa_inicial(name, phone, language)
+    chave, reiniciada = to, True
+    # Por padrão NÃO destrói uma conversa em andamento. Use ?reset=1 para zerar
+    # de propósito (útil em teste), ciente de que o histórico é descartado.
+    if (request.args.get("reset") or "").strip() not in ("1", "true", "yes"):
+        conversa, chave, ja_conversava = _preservar_conversa(conversa, to)
+        reiniciada = not ja_conversava
     try:
         msg = _enviar_template(to, sid, name, conversa["ref_code"])
     except Exception as e:
         return {"error": str(e)}, 500
 
-    agent_store.salvar(to, conversa)
-    return {"status": "enviado", "sid": msg.sid, "to": to, "ref": conversa["ref_code"]}, 200
+    agent_store.salvar(chave, conversa)
+    return {"status": "enviado", "sid": msg.sid, "to": to, "ref": conversa["ref_code"],
+            "historico": "zerado" if reiniciada else "preservado"}, 200
 
 
 @app.route("/agent/health/disparo", methods=["GET"])
@@ -890,9 +914,17 @@ def _disparar_leads_agente():
             continue
 
         conversa = _nova_conversa_inicial(nome, telefone_fmt, language)
+        conversa, chave, ja_conversava = _preservar_conversa(conversa, telefone_fmt)
+        if ja_conversava:
+            # Já existe conversa em andamento: reenviar o template seria spam E
+            # apagaria o histórico. Marca como enviado (claramente foi) e segue.
+            _marcar_status(sheet, idx, col_status, "Sent")
+            pulados += 1
+            print(f"💬 [agente] {nome} já está em conversa — não reenvia o template")
+            continue
         try:
             _enviar_template(telefone_fmt, sid, nome, conversa["ref_code"])
-            agent_store.salvar(telefone_fmt, conversa)
+            agent_store.salvar(chave, conversa)
             _marcar_status(sheet, idx, col_status, "Sent")
             enviados += 1
             print(f"✅ [agente] enviado para {nome} ({telefone_fmt}) [{language}]")
