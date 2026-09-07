@@ -869,6 +869,10 @@ def _fechar_reserva(conversa, **d):
         "customer_birthdate": d.get("nascimento", ""),
         "customer_driver_license_number": d.get("cnh", ""),
         "additional_charges": charges,
+        # Só para o email da equipe (a HQ ignora): sem isto o aviso sai com IDs crus.
+        "customer_phone": conversa.get("phone", ""),
+        "vehicle_label": nome_classe or modelo,
+        "payment_choice": str(d.get("pagamento") or "").lower(),
     })
     try:
         r2 = requests.post(f"{PROD_API_BASE}/api/hq/create-reservation", json=reserva, timeout=60)

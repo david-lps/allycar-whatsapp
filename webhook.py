@@ -1044,6 +1044,80 @@ def _sunny_forced(data, rota):
     return SUNNY_BRAND_ID, SUNNY_LOCATION_ID, SUNNY_VEHICLE_CLASS_ID
 
 
+# Rótulos para o email do aluguel (os IDs sozinhos não dizem nada pra quem lê).
+_LOCAIS_LABEL = {
+    '3': 'Aeroporto de Orlando (MCO)',
+    '6': 'Onde o cliente estiver em Orlando (raio de 30 milhas)',
+    '2': 'Escritório — 1900 33rd St, Orlando, FL 32839',
+}
+_ITENS_LABEL = {
+    '10': 'Baby Seat (bebê conforto)',
+    '9':  'Child Seat (cadeirinha)',
+    '16': 'Carrinho simples',
+    '17': 'Carrinho duplo',
+}
+
+
+def _email_reserva_aluguel(data, payment_link):
+    """Monta (texto, assunto) do email de ALUGUEL fechado pelo agente do WhatsApp.
+
+    Nada a ver com a van do Sunny Storage: aqui interessa o carro escolhido, os
+    locais, as cadeirinhas e — principalmente — o que ainda é manual do Higor.
+    """
+    nome  = f"{data.get('customer_first_name') or ''} {data.get('customer_last_name') or ''}".strip()
+    forma = str(data.get('payment_choice') or '').lower()
+
+    if forma in ('pix', 'parcelado'):
+        # O link que o cliente recebe é o da página da Braza, montado pelo agente
+        # depois desta resposta — por isso não aparece aqui.
+        _pgto = (f"Cliente escolheu {'PIX (3,5% off)' if forma == 'pix' else 'parcelamento em até 12x'}"
+                 " — pagamento pela página da BrazaBank, link enviado no WhatsApp.\n"
+                 "A reserva fica AGUARDANDO PAGAMENTO.")
+    elif payment_link:
+        _pgto = (f"Link de pagamento (Stripe) enviado ao cliente:\n{payment_link}\n\n"
+                 "A reserva fica AGUARDANDO PAGAMENTO. Se o cliente não pagar,\n"
+                 "a própria HQ cancela.")
+    else:
+        _pgto = ("⚠️ ATENÇÃO: a HQ NÃO devolveu link de pagamento.\n"
+                 "A cobrança precisa ser feita MANUALMENTE.")
+
+    itens = data.get('additional_charges') or []
+    if not isinstance(itens, list):
+        itens = [itens]
+    itens_txt = ', '.join(_ITENS_LABEL.get(str(i), f'ID {i}') for i in itens) or 'nenhum'
+
+    _loc = lambda v: _LOCAIS_LABEL.get(str(v or ''), f'ID {v}')
+    veiculo = data.get('vehicle_label') or f"Class ID {data.get('vehicle_class_id')}"
+
+    conteudo = f"""
+Nova reserva de ALUGUEL 🚗 (fechada pelo agente no WhatsApp)
+
+{_pgto}
+
+Cliente:
+Nome: {nome}
+Email: {data.get('customer_email')}
+WhatsApp: {data.get('customer_phone') or '—'}
+Nascimento: {data.get('customer_birthdate')}
+CNH: {data.get('customer_driver_license_number')}
+
+Reserva:
+Veículo: {veiculo}
+Retirada: {data.get('pick_up_date')} às {data.get('pick_up_time')} — {_loc(data.get('pick_up_location'))}
+Devolução: {data.get('return_date')} às {data.get('return_time')} — {_loc(data.get('return_location') or data.get('pick_up_location'))}
+Itens de bebê: {itens_txt}
+
+⚙️ Ainda é manual (Higor):
+- anexar o arquivo da Driver License no cadastro da HQ
+- conferir endereço e nome completo
+- habilitar as cadeirinhas/carrinhos por criança, se houver
+"""
+    assunto = (f"{'🚗' if payment_link or forma in ('pix', 'parcelado') else '⚠️'} "
+               f"Reserva WhatsApp: {nome or 'cliente'}"
+               f"{'' if payment_link or forma in ('pix', 'parcelado') else ' — SEM LINK DE PAGAMENTO'}")
+    return conteudo, assunto
+
+
 @app.route('/api/hq/create-contact', methods=['POST', 'OPTIONS'])
 def hq_create_contact():
     """Proxy: cria contato via /car-rental/reservations/customer (multipart)."""
@@ -1281,7 +1355,18 @@ def hq_create_reservation():
                     "O cliente viu a tela de fallback — cobrança precisa ser feita MANUALMENTE."
                 )
 
-                conteudo = f"""
+                if data.get('rental'):
+                    # Aluguel de carro fechado pelo agente do WhatsApp. O endpoint é o
+                    # mesmo do Sunny Storage, mas o email NÃO pode ser o da van —
+                    # aqui vai o resumo do aluguel e o que ainda é manual do Higor.
+                    conteudo, assunto = _email_reserva_aluguel(data, payment_link)
+                else:
+                    assunto = (
+                        f"{'💳' if payment_link else '⚠️'} Reserva VAN Sunny Storage: "
+                        f"{data.get('customer_first_name')} {data.get('customer_last_name')}"
+                        f"{'' if payment_link else ' — SEM LINK DE PAGAMENTO'}"
+                    )
+                    conteudo = f"""
 Nova reserva criada 🚐 (self-service Sunny Storage)
 
 {_pgto}
@@ -1315,11 +1400,7 @@ Nascimento: {data.get('customer_birthdate')}
                     json={
                         "from": "Allycar <booking@allycar.com>",
                         "to": destinatarios,
-                        "subject": (
-                            f"{'💳' if payment_link else '⚠️'} Reserva VAN Sunny Storage: "
-                            f"{data.get('customer_first_name')} {data.get('customer_last_name')}"
-                            f"{'' if payment_link else ' — SEM LINK DE PAGAMENTO'}"
-                        ),
+                        "subject": assunto,
                         "text": conteudo
                     },
                     timeout=10
