@@ -17,6 +17,7 @@ import os
 import re
 import json
 from datetime import datetime
+from urllib.parse import urlencode
 from decimal import Decimal, ROUND_HALF_UP
 
 import pytz
@@ -1005,8 +1006,28 @@ def _fechar_reserva(conversa, **d):
             except Exception as e:
                 print(f"⚠️ [checkout] não consegui buscar o total da reserva {reserva_id}: {e}")
         if total and reserva_id:
-            link = (f"{SITE_PAGAMENTO_BR}?amount={total:.2f}&order={reserva_id}"
-                    f"&ruuid={reserva_uuid}&method={metodo_braza}")
+            # A página já pré-preenche o formulário com o que vier na querystring
+            # (cep, address, complement, phone, email — os mesmos nomes que o
+            # banner do site usa). Mandamos o que o cliente já contou aqui para
+            # ele não redigitar. O CPF a gente não tem: é o único campo que
+            # sobra para ele preencher.
+            _pre = {
+                "amount": f"{total:.2f}",
+                "order": reserva_id,
+                "ruuid": reserva_uuid,
+                "method": metodo_braza,
+                "email": d.get("email", ""),
+                "phone": conversa.get("phone", ""),
+                "cep": d.get("endereco_cep", ""),
+                "address": _endereco,
+            }
+            # O complemento já foi junto no endereço; só mandamos no campo
+            # próprio se por algum motivo tiver ficado de fora.
+            _comp = (d.get("endereco_complemento") or "").strip()
+            if _comp and _comp.lower() not in _endereco.lower():
+                _pre["complement"] = _comp
+            link = f"{SITE_PAGAMENTO_BR}?" + urlencode(
+                {k: v for k, v in _pre.items() if v not in (None, "")})
         else:
             # Quem escolheu PIX/parcelado NUNCA pode receber o link do Stripe:
             # o desconto e o parcelamento só existem na página da Braza. Sem os
