@@ -15,6 +15,7 @@ Fluxo assíncrono (o agente com Opus pode passar do timeout de ~15s do Twilio):
 import os
 import re
 import json
+import base64
 import time
 import secrets
 import threading
@@ -76,7 +77,12 @@ DASHBOARD_TOKEN = os.getenv("AGENT_DASHBOARD_TOKEN")
 # TRACK_BASE_URL: base pública do serviço (troque por go.allycar.com se criar o CNAME).
 TRACK_BASE_URL = os.getenv("TRACK_BASE_URL", "https://allycar-agent-production.up.railway.app").rstrip("/")
 SITE_URL = os.getenv("SITE_URL", "https://allycar.com").rstrip("/")
-_ALLYCAR_LINK_RE = re.compile(r'(?:https?://)?(?:www\.)?allycar\.com(?:/[^\s]*)?', re.IGNORECASE)
+# Só o DOMÍNIO NU vira link rastreado. Nunca URLs com caminho — senão o link de
+# pagamento (allycar.com/pagar-braza.html?order=...) seria trocado pelo rastreado,
+# que redireciona para a home, e o cliente ficava sem pagar. O lookbehind evita
+# reescrever um link que já é rastreado (go.allycar.com/r/...).
+_ALLYCAR_LINK_RE = re.compile(
+    r'(?<![\w.-])(?:https?://)?(?:www\.)?allycar\.com/?(?![\w/?#-])', re.IGNORECASE)
 
 # Rastreio do link no TEMPLATE do disparo inicial. Fica DESLIGADO até o template
 # na Twilio ter a variável {{2}} (o código) aprovada e o go.allycar.com no ar.
@@ -521,17 +527,45 @@ Motivo: {conversa.get('motivo_escalonamento', '')}
 --- Conversa completa ---
 {_transcricao(conversa)}
 """
+        # Documentos que o cliente mandou (CNH). A API da HQ não tem upload de
+        # arquivo — só GET/DELETE em /files — então o anexo vai por e-mail, para
+        # a equipe subir no cadastro pelo painel.
+        anexos_email = []
+        for i, a in enumerate((conversa.get("anexos") or [])[-3:], start=1):
+            try:
+                im = requests.get(
+                    a.get("url", ""),
+                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                    timeout=25,
+                )
+                if im.status_code == 200 and im.content:
+                    ct = im.headers.get("Content-Type", "image/jpeg")
+                    ext = "png" if "png" in ct else ("pdf" if "pdf" in ct else "jpg")
+                    anexos_email.append({
+                        "filename": f"documento-{i}.{ext}",
+                        "content": base64.b64encode(im.content).decode(),
+                    })
+                else:
+                    print(f"⚠️ anexo {i} não baixou: HTTP {im.status_code}")
+            except Exception as e:
+                print(f"⚠️ falha ao baixar anexo {i}: {e}")
+        if anexos_email:
+            conteudo += f"\n\n📎 {len(anexos_email)} documento(s) em anexo (CNH) — subir no cadastro da HQ."
+
+        corpo = {
+            "from": "Allycar <booking@allycar.com>",
+            "to": ["david@allycar.com", "bruno@allycar.com", "higor@allycar.com"],
+            "subject": assunto,
+            "text": conteudo,
+        }
+        if anexos_email:
+            corpo["attachments"] = anexos_email
         requests.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
                      "Content-Type": "application/json"},
-            json={
-                "from": "Allycar <booking@allycar.com>",
-                "to": ["david@allycar.com", "bruno@allycar.com", "higor@allycar.com"],
-                "subject": assunto,
-                "text": conteudo,
-            },
-            timeout=10,
+            json=corpo,
+            timeout=20,
         )
         conversa["email_enviado"] = True
     except Exception as e:
