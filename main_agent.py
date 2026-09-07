@@ -14,6 +14,7 @@ débito; para clientes no Brasil, também PIX e até 12x. Modelo: claude-opus-4-
 """
 
 import os
+import re
 import json
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -53,6 +54,9 @@ AGENT_CHECKOUT = (os.getenv("AGENT_CHECKOUT", "") or "").strip().lower() in ("1"
 # PRODUÇÃO. O agente os chama por HTTP para não duplicar código que mexe com dinheiro.
 PROD_API_BASE = os.getenv("PROD_API_BASE", "https://allycar-whatsapp-production.up.railway.app").rstrip("/")
 SITE_PAGAMENTO_BR = os.getenv("SITE_PAGAMENTO_BR", "https://allycar.com/pagar-braza.html")
+# Formas de pagamento que vão para a BrazaBank (PIX com desconto e parcelamento).
+# Os aliases existem porque o modelo às vezes escreve fora do enum da ferramenta.
+FORMAS_BRAZA = ("pix", "parcelado", "pix_ou_parcelado", "braza")
 
 # Locais de retirada/devolução cadastrados na HQ
 LOCAIS_HQ = {
@@ -340,8 +344,10 @@ FLUXO (conduza nesta ordem):
 - S5 RESERVA: quando o cliente ACEITAR, você pode FECHAR NA HORA, aqui mesmo. Não mande ele
   esperar consultor — o "sim" tem prazo de validade. Peça os dados que faltam de uma vez, de
   forma leve e organizada (uma mensagem só, em lista curta):
-    • nome completo  • email  • data de nascimento  • número da CNH (e a FOTO da CNH)
-    • endereço completo: rua, número, cidade, estado, CEP e país
+    • nome completo  • email  • data de nascimento
+    • CNH: o número, a DATA DE VALIDADE (vencimento) e a FOTO da carteira — peça os três
+      juntos; a validade é obrigatória para emitir a reserva
+    • endereço: rua, número e complemento numa linha só, mais cidade, estado, CEP e país
     • confirmar datas E horários de retirada/devolução
     • ONDE RETIRAR e ONDE DEVOLVER o carro (ver a regra de LOCAIS logo abaixo)
     • COMO ELE QUER PAGAR (pergunte sempre — ver a regra de FORMA DE PAGAMENTO abaixo)
@@ -472,8 +478,21 @@ TOOLS = [
                 "email": {"type": "string"},
                 "nascimento": {"type": "string", "description": "yyyy-mm-dd (confirma os 25 anos)"},
                 "cnh": {"type": "string", "description": "número da habilitação"},
-                "endereco_rua": {"type": "string", "description": "rua/avenida"},
-                "endereco_numero": {"type": "string", "description": "número"},
+                "cnh_validade": {
+                    "type": "string",
+                    "description": ("yyyy-mm-dd — data de VALIDADE (vencimento) da CNH. "
+                                    "Obrigatória para emitir a reserva. Precisa ser POSTERIOR "
+                                    "à data de devolução; se já venceu ou vence durante a "
+                                    "viagem, avise o cliente e NÃO feche."),
+                },
+                "endereco_rua": {
+                    "type": "string",
+                    "description": ("Endereço em UMA linha: rua + número + complemento juntos "
+                                    "(ex.: 'Rua Itajará, 67, apto 12'). Cidade, estado, CEP e "
+                                    "país vão nos campos próprios."),
+                },
+                "endereco_numero": {"type": "string", "description": "opcional — só se vier separado do endereço"},
+                "endereco_complemento": {"type": "string", "description": "opcional — apto/bloco, se vier separado"},
                 "endereco_cidade": {"type": "string"},
                 "endereco_estado": {"type": "string"},
                 "endereco_cep": {"type": "string"},
@@ -508,6 +527,7 @@ TOOLS = [
                 },
             },
             "required": ["primeiro_nome", "sobrenome", "email", "nascimento", "cnh",
+                         "cnh_validade",
                          "modelo", "data_retirada", "data_devolucao", "pagamento",
                          "local_retirada", "local_devolucao"],
             "additionalProperties": False,
@@ -648,6 +668,62 @@ def _hora_valida(hora):
     if not (0 <= h <= 23 and 0 <= m <= 59):
         return HORA_PADRAO
     return f"{h:02d}:{m:02d}"
+
+
+def _data_iso(valor):
+    """Normaliza data para 'YYYY-MM-DD'. Aceita o que o cliente digita
+    (28/05/1981, 28-05-1981, 1981-05-28). Formato irreconhecível → "".
+
+    Vazio é de propósito: a HQ recusa data malformada e o create-contact
+    inteiro falharia — melhor gravar sem a validade do que perder a reserva.
+    """
+    txt = str(valor or "").strip()
+    if not txt:
+        return ""
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", txt)
+    if not m:
+        m2 = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", txt)
+        if not m2:
+            return ""
+        dia, mes, ano = m2.group(1), m2.group(2), m2.group(3)
+    else:
+        ano, mes, dia = m.group(1), m.group(2), m.group(3)
+    try:
+        datetime(int(ano), int(mes), int(dia))
+    except ValueError:
+        return ""
+    return f"{int(ano):04d}-{int(mes):02d}-{int(dia):02d}"
+
+
+def _hq_valor(v):
+    """Dinheiro na HQ vem em DOIS formatos: '1429.23' (string, na listagem) e
+    {'amount': '1429.23', ...} (objeto, no detalhe e no confirm). Aceita os dois.
+
+    Era daqui que vinha o bug do PIX: float({...}) estourava TypeError e o
+    checkout caía no link do Stripe sem ninguém perceber.
+    """
+    if isinstance(v, dict):
+        v = v.get("amount") or v.get("usd_amount")
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _endereco_em_uma_linha(rua, numero, complemento=""):
+    """A HQ não tem campo de número: /fields?item_type=contacts só expõe
+    street/street_2/city/state/zip/country, e em 100% dos clientes reais o
+    endereço inteiro está dentro de 'street'. Junta tudo numa linha só.
+    """
+    rua = str(rua or "").strip().rstrip(" ,").strip()
+    numero = str(numero or "").strip().rstrip(" ,").strip()
+    comp = str(complemento or "").strip().rstrip(" ,").strip()
+    # Se o cliente já mandou "Rua Itajará, 67", não repete o 67 — mas só quando
+    # o número está no FIM da rua. Procurar em qualquer posição comeria o número
+    # de "Rua 25 de Março, 25" e "Avenida 9 de Julho, 9".
+    if numero and re.search(rf"\b{re.escape(numero)}\s*$", rua):
+        numero = ""
+    return ", ".join(p for p in (rua, numero, comp) if p)
 
 
 def _extrair_assentos(features):
@@ -834,6 +910,8 @@ def _fechar_reserva(conversa, **d):
             foto_cnh = a.get("url", "")
             break
 
+    _endereco = _endereco_em_uma_linha(d.get("endereco_rua"), d.get("endereco_numero"),
+                                       d.get("endereco_complemento"))
     contato = dict(base, **{
         "first_name": d.get("primeiro_nome", ""),
         "last_name": d.get("sobrenome", ""),
@@ -841,9 +919,14 @@ def _fechar_reserva(conversa, **d):
         "phone_number": conversa.get("phone", ""),
         "birthdate": d.get("nascimento", ""),
         "license_number": d.get("cnh", ""),
+        # Validade da CNH: campo 256 da HQ ("Expiration Date"), obrigatório no
+        # cadastro. Formato irreconhecível vira "" — melhor sem a validade do
+        # que derrubar o create-contact e perder a reserva inteira.
+        "license_expiration": _data_iso(d.get("cnh_validade", "")),
         "license_image_url": foto_cnh,
-        "street": d.get("endereco_rua", ""),
-        "housenumber": d.get("endereco_numero", ""),
+        # A HQ ignora 'housenumber' (null em 100% dos clientes reais); o número
+        # tem que ir dentro da rua, senão some — foi o que aconteceu antes.
+        "street": _endereco,
         "city": d.get("endereco_cidade", ""),
         "state": d.get("endereco_estado", ""),
         "zip": d.get("endereco_cep", ""),
@@ -885,20 +968,25 @@ def _fechar_reserva(conversa, **d):
     rsv = dados.get("reservation") or {}
     reserva_id = rsv.get("id") or dados.get("id") or j2.get("reservation_id")
     reserva_uuid = rsv.get("uuid") or dados.get("uuid") or ""
-    total = rsv.get("total_price") or rsv.get("uninvoiced_amount")
+    # O total vem como OBJETO ({'amount': '1429.23'}) no confirm e no detalhe, e
+    # como string na listagem — por isso passa pelo _hq_valor.
+    total = _hq_valor(rsv.get("total_price"))
+    if total is None:
+        total = _hq_valor(rsv.get("uninvoiced_amount"))
     link = (j2.get("payment_link")
             or (dados.get("transaction") or {}).get("payment_link")
             or dados.get("payment_link"))
 
     # Caminho do PIX/parcelamento (só Brasil): a página cuida de CPF e endereço.
-    # Ela EXIGE amount + order + ruuid — sem isso mostra "Não recebemos os dados
-    # da reserva". Se o confirm não trouxe o total/uuid, buscamos a reserva.
+    # Ela exige amount + order (o ruuid vai junto, mas a página não lê). Se o
+    # confirm não trouxe o total, buscamos a reserva.
     forma = str(d.get("pagamento") or "").lower()
     # PIX e parcelamento passam pela Braza; cartão à vista vai no link do Stripe.
-    quer_br = forma in ("pix", "parcelado", "pix_ou_parcelado", "braza")
+    quer_br = forma in FORMAS_BRAZA
     metodo_braza = "pix" if forma in ("pix", "pix_ou_parcelado") else "card"
-    if quer_br and reserva_id:
-        if not total or not reserva_uuid:
+    falha_br = ""
+    if quer_br:
+        if reserva_id and total is None:
             try:
                 rr = requests.get(
                     f"{HQ_API_HOST}/api-america-miami/car-rental/reservations/{reserva_id}",
@@ -907,21 +995,24 @@ def _fechar_reserva(conversa, **d):
                 )
                 _d = (rr.json() or {}).get("data") or {}
                 _r = _d.get("reservation") or _d
-                total = total or _r.get("total_price") or _r.get("uninvoiced_amount")
+                total = (_hq_valor(_r.get("total_price"))
+                         or _hq_valor(_r.get("uninvoiced_amount"))
+                         or _hq_valor((_d.get("total") or {}).get("outstanding_balance")))
                 reserva_uuid = reserva_uuid or _r.get("uuid") or ""
             except Exception as e:
                 print(f"⚠️ [checkout] não consegui buscar o total da reserva {reserva_id}: {e}")
-        try:
-            valor = f"{float(total):.2f}"
-        except (TypeError, ValueError):
-            valor = ""
-        if valor:
-            link = (f"{SITE_PAGAMENTO_BR}?amount={valor}&order={reserva_id}"
+        if total and reserva_id:
+            link = (f"{SITE_PAGAMENTO_BR}?amount={total:.2f}&order={reserva_id}"
                     f"&ruuid={reserva_uuid}&method={metodo_braza}")
         else:
-            # Sem o valor a página não funciona — melhor cair no Stripe do que
-            # mandar um link que mostra erro para o cliente.
-            print(f"⚠️ [checkout] sem total para a reserva {reserva_id} — usando o link do Stripe")
+            # Quem escolheu PIX/parcelado NUNCA pode receber o link do Stripe:
+            # o desconto e o parcelamento só existem na página da Braza. Sem os
+            # dados para montá-la, o consultor manda o link à mão.
+            falha_br = (f"⚠️ O cliente escolheu {forma.upper()} e o link da BrazaBank NÃO foi "
+                        f"gerado (total={total!r}, reserva={reserva_id!r}). Mandar o link "
+                        f"manualmente — NÃO mandar o link do Stripe.")
+            print(f"❌ [checkout] {falha_br}")
+            link = None
 
     conversa["reservou"] = True
     conversa["escalar"] = True          # equipe recebe o email com a conversa
@@ -935,7 +1026,8 @@ def _fechar_reserva(conversa, **d):
         f"Retirada: {ret['label']}\nDevolução: {dev['label']}\n"
         + ("⚠️ ENTREGA/RETIRADA NO ENDEREÇO DO CLIENTE — confirmar o endereço exato com ele.\n"
            if 6 in (ret["id"], dev["id"]) else "")
-        + f"CNH {d.get('cnh')} · endereço: {d.get('endereco_rua','')} {d.get('endereco_numero','')}, "
+        + (falha_br + "\n" if falha_br else "")
+        + f"CNH {d.get('cnh')} (validade {d.get('cnh_validade') or 'NÃO INFORMADA'}) · endereço: {_endereco}, "
           f"{d.get('endereco_cidade','')}/{d.get('endereco_estado','')} {d.get('endereco_cep','')} "
           f"{(d.get('endereco_pais','') or '').upper()}"
           f"{' · CNH anexada no e-mail' if foto_cnh else ' · SEM foto da CNH'}"
@@ -944,7 +1036,8 @@ def _fechar_reserva(conversa, **d):
     if not link:
         return {"status": "reserva_criada_sem_link", "reserva": reserva_id,
                 "instrucao": ("A reserva foi criada, mas o link de pagamento não veio. Avise o cliente "
-                              "com tranquilidade que um consultor manda o link em instantes.")}
+                              "com tranquilidade que um consultor manda o link em instantes. "
+                              "NÃO invente link nem peça dados de cartão.")}
     return {
         "status": "ok", "reserva": reserva_id, "veiculo": nome_classe, "link_pagamento": link,
         "itens": [ITENS_BEBE[i]["label"] for i in itens],

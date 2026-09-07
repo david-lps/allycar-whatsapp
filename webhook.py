@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from main import conectar_google_sheets
 from datetime import datetime, timedelta
 import os
+import re
 import time
 import threading
 import http.client
@@ -1066,8 +1067,11 @@ def _email_reserva_aluguel(data, payment_link):
     """
     nome  = f"{data.get('customer_first_name') or ''} {data.get('customer_last_name') or ''}".strip()
     forma = str(data.get('payment_choice') or '').lower()
+    # Mesma lista do FORMAS_BRAZA do main_agent.py — se divergir, o email diz
+    # "Stripe" para um cliente que foi mandado à Braza.
+    braza = forma in ('pix', 'parcelado', 'pix_ou_parcelado', 'braza')
 
-    if forma in ('pix', 'parcelado'):
+    if braza:
         # O link que o cliente recebe é o da página da Braza, montado pelo agente
         # depois desta resposta — por isso não aparece aqui.
         _pgto = (f"Cliente escolheu {'PIX (3,5% off)' if forma == 'pix' else 'parcelamento em até 12x'}"
@@ -1112,9 +1116,9 @@ Itens de bebê: {itens_txt}
 - conferir endereço e nome completo
 - habilitar as cadeirinhas/carrinhos por criança, se houver
 """
-    assunto = (f"{'🚗' if payment_link or forma in ('pix', 'parcelado') else '⚠️'} "
-               f"Reserva WhatsApp: {nome or 'cliente'}"
-               f"{'' if payment_link or forma in ('pix', 'parcelado') else ' — SEM LINK DE PAGAMENTO'}")
+    ok = bool(payment_link or braza)
+    assunto = (f"{'🚗' if ok else '⚠️'} Reserva WhatsApp: {nome or 'cliente'}"
+               f"{'' if ok else ' — SEM LINK DE PAGAMENTO'}")
     return conteudo, assunto
 
 
@@ -1134,11 +1138,23 @@ def hq_create_contact():
 
         _s_brand, _s_loc, _s_class = _sunny_forced(data, 'create-contact')
 
+        # Validade da CNH: campo 256 da HQ (label "Expiration Date", dbcolumn
+        # f256, tipo datewithcalendar). Não existe coluna nativa para ela — todo
+        # cliente real tem o valor em f256. Só aceitamos YYYY-MM-DD: data torta
+        # faria a HQ recusar o POST e derrubaria o cadastro inteiro.
+        _exp = str(data.get('license_expiration', '') or '').strip()
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', _exp):
+            if _exp:
+                print(f"⚠️ [create-contact] validade da CNH ignorada (formato inválido): {_exp!r}")
+            _exp = ''
+
         # Campos confirmados inspecionando um cliente real da HQ:
         # - driver_license  = número da CNH (campo NATIVO; o f254 fica vazio nos
         #   cadastros reais, então mandamos nos dois por segurança)
         # - street/city/state/zip/country = endereço (campos nativos)
         # - f272 = anexo do documento (é onde a imagem da carteira aparece)
+        # O 'housenumber' NÃO é gravado pela HQ (null em 100% dos clientes): o
+        # número da casa tem que vir dentro de 'street'.
         fields = {
             'contact_entity': 'person',
             'first_name':     data.get('first_name', ''),
@@ -1148,6 +1164,12 @@ def hq_create_contact():
             'birthdate':      data.get('birthdate', ''),
             'driver_license': data.get('license_number', ''),
             'field_254':      data.get('license_number', ''),
+            # Três nomes para o MESMO campo 256 — o multipart aceita o dbcolumn
+            # (como driver_license/street), mas nunca testamos este; chave que a
+            # HQ não conhece é ignorada sem erro, então mandar os três é barato.
+            'f256':               _exp,
+            'field_256':          _exp,
+            'expiration_date_1':  _exp,
             'street':         data.get('street', ''),
             'housenumber':    data.get('housenumber', ''),
             'city':           data.get('city', ''),
@@ -1216,6 +1238,18 @@ def hq_create_contact():
             or (resp_json.get('contact') or {}).get('id')
         )
  
+        # Confere o que a HQ REALMENTE gravou. Chave que ela não conhece é
+        # ignorada em silêncio (foi assim que o housenumber sumiu por meses) —
+        # este log é o que denuncia isso sem precisar abrir a HQ.
+        _cust = _data.get('customer') or {}
+        if isinstance(_cust, dict) and _cust:
+            print(f"[create-contact] gravado na HQ → street={_cust.get('street')!r} "
+                  f"f256={_cust.get('f256')!r} (enviado {_exp!r}) "
+                  f"driver_license={_cust.get('driver_license')!r}")
+            if _exp and not _cust.get('f256'):
+                print("⚠️ [create-contact] a validade da CNH NÃO foi gravada — "
+                      "o nome do campo 256 no multipart precisa ser revisto")
+
         if contact_id:
             normalized = {'contact': {'id': contact_id}, 'original': resp_json}
         else:
@@ -1346,21 +1380,20 @@ def hq_create_reservation():
                     "david@allycar.com"
                 ]
 
-                _pgto = (
-                    f"Link de pagamento gerado — cliente redirecionado ao Stripe:\n{payment_link}\n\n"
-                    "A reserva fica AGUARDANDO PAGAMENTO. Se o cliente não pagar,\n"
-                    "a própria HQ cancela. Nada a fazer manualmente."
-                    if payment_link else
-                    "⚠️ ATENÇÃO: a HQ NÃO devolveu link de pagamento.\n"
-                    "O cliente viu a tela de fallback — cobrança precisa ser feita MANUALMENTE."
-                )
-
                 if data.get('rental'):
                     # Aluguel de carro fechado pelo agente do WhatsApp. O endpoint é o
                     # mesmo do Sunny Storage, mas o email NÃO pode ser o da van —
                     # aqui vai o resumo do aluguel e o que ainda é manual do Higor.
                     conteudo, assunto = _email_reserva_aluguel(data, payment_link)
                 else:
+                    _pgto = (
+                        f"Link de pagamento gerado — cliente redirecionado ao Stripe:\n{payment_link}\n\n"
+                        "A reserva fica AGUARDANDO PAGAMENTO. Se o cliente não pagar,\n"
+                        "a própria HQ cancela. Nada a fazer manualmente."
+                        if payment_link else
+                        "⚠️ ATENÇÃO: a HQ NÃO devolveu link de pagamento.\n"
+                        "O cliente viu a tela de fallback — cobrança precisa ser feita MANUALMENTE."
+                    )
                     assunto = (
                         f"{'💳' if payment_link else '⚠️'} Reserva VAN Sunny Storage: "
                         f"{data.get('customer_first_name')} {data.get('customer_last_name')}"
