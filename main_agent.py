@@ -302,7 +302,8 @@ FLUXO (conduza nesta ordem):
   esperar consultor — o "sim" tem prazo de validade. Peça os dados que faltam de uma vez, de
   forma leve e organizada (uma mensagem só, em lista curta):
     • nome completo  • email  • data de nascimento  • número da CNH (e a FOTO da CNH)
-    • endereço completo  • confirmar datas E horários de retirada/devolução
+    • endereço completo: rua, número, cidade, estado, CEP e país
+    • confirmar datas E horários de retirada/devolução
     • confirmar o modelo  • quais itens de bebê precisa (bebê conforto, cadeirinha,
       carrinho simples ou duplo — todos INCLUSOS, sem custo)
   Explique que é rapidinho e que é o necessário para emitir a reserva. Quando tiver TUDO,
@@ -423,7 +424,12 @@ TOOLS = [
                 "email": {"type": "string"},
                 "nascimento": {"type": "string", "description": "yyyy-mm-dd (confirma os 25 anos)"},
                 "cnh": {"type": "string", "description": "número da habilitação"},
-                "endereco": {"type": "string", "description": "endereço completo do cliente"},
+                "endereco_rua": {"type": "string", "description": "rua/avenida"},
+                "endereco_numero": {"type": "string", "description": "número"},
+                "endereco_cidade": {"type": "string"},
+                "endereco_estado": {"type": "string"},
+                "endereco_cep": {"type": "string"},
+                "endereco_pais": {"type": "string", "description": "sigla de 2 letras (br, us, mx, ar...)"},
                 "modelo": {"type": "string", "description": "modelo EXATO já acordado"},
                 "data_retirada": {"type": "string", "description": "yyyy-mm-dd"},
                 "data_devolucao": {"type": "string", "description": "yyyy-mm-dd"},
@@ -757,6 +763,13 @@ def _fechar_reserva(conversa, **d):
         "pick_up_date": d.get("data_retirada"),
         "return_date": d.get("data_devolucao"),
     }
+    # Foto da CNH: pega o anexo de imagem mais recente que o cliente mandou
+    foto_cnh = ""
+    for a in reversed(conversa.get("anexos") or []):
+        if "image" in (a.get("tipo") or "") or "pdf" in (a.get("tipo") or ""):
+            foto_cnh = a.get("url", "")
+            break
+
     contato = dict(base, **{
         "first_name": d.get("primeiro_nome", ""),
         "last_name": d.get("sobrenome", ""),
@@ -764,6 +777,13 @@ def _fechar_reserva(conversa, **d):
         "phone_number": conversa.get("phone", ""),
         "birthdate": d.get("nascimento", ""),
         "license_number": d.get("cnh", ""),
+        "license_image_url": foto_cnh,
+        "street": d.get("endereco_rua", ""),
+        "housenumber": d.get("endereco_numero", ""),
+        "city": d.get("endereco_cidade", ""),
+        "state": d.get("endereco_estado", ""),
+        "zip": d.get("endereco_cep", ""),
+        "country": (d.get("endereco_pais", "") or "").lower()[:2],
     })
     try:
         r = requests.post(f"{PROD_API_BASE}/api/hq/create-contact", json=contato, timeout=40)
@@ -812,7 +832,10 @@ def _fechar_reserva(conversa, **d):
     conversa["motivo_escalonamento"] = (
         f"RESERVA CRIADA PELO AGENTE — HQ #{reserva_id} · {nome_classe} · "
         f"{d.get('data_retirada')} a {d.get('data_devolucao')} · aguardando pagamento. "
-        f"CNH {d.get('cnh')} · endereço: {d.get('endereco','(não informado)')}"
+        f"CNH {d.get('cnh')} · endereço: {d.get('endereco_rua','')} {d.get('endereco_numero','')}, "
+        f"{d.get('endereco_cidade','')}/{d.get('endereco_estado','')} {d.get('endereco_cep','')} "
+        f"{(d.get('endereco_pais','') or '').upper()}"
+        f"{' · CNH anexada' if foto_cnh else ' · SEM foto da CNH'}"
     )
 
     if not link:

@@ -1060,8 +1060,11 @@ def hq_create_contact():
 
         _s_brand, _s_loc, _s_class = _sunny_forced(data, 'create-contact')
 
-        # Campos confirmados via curl --form (multipart/form-data)
-        # field_254 = DL Number (campo customizado da conta)
+        # Campos confirmados inspecionando um cliente real da HQ:
+        # - driver_license  = número da CNH (campo NATIVO; o f254 fica vazio nos
+        #   cadastros reais, então mandamos nos dois por segurança)
+        # - street/city/state/zip/country = endereço (campos nativos)
+        # - f272 = anexo do documento (é onde a imagem da carteira aparece)
         fields = {
             'contact_entity': 'person',
             'first_name':     data.get('first_name', ''),
@@ -1069,7 +1072,14 @@ def hq_create_contact():
             'email':          data.get('email', ''),
             'phone_number':   data.get('phone_number', ''),
             'birthdate':      data.get('birthdate', ''),
+            'driver_license': data.get('license_number', ''),
             'field_254':      data.get('license_number', ''),
+            'street':         data.get('street', ''),
+            'housenumber':    data.get('housenumber', ''),
+            'city':           data.get('city', ''),
+            'state':          data.get('state', ''),
+            'zip':            data.get('zip', ''),
+            'country':        data.get('country', ''),
             'pick_up_date':   data.get('pick_up_date', ''),
             'return_date':    data.get('return_date', ''),
             'pick_up_location': _s_loc,
@@ -1077,19 +1087,49 @@ def hq_create_contact():
             'brand_id':         _s_brand,
             'vehicle_class_id': _s_class,
         }
- 
-        # Monta multipart manualmente
+
+        # Imagem da CNH: baixamos do Twilio (URL protegida) e anexamos no f272.
+        # Best-effort: se falhar, o cadastro é criado do mesmo jeito.
+        anexo = None
+        img_url = data.get('license_image_url')
+        if img_url:
+            try:
+                _im = requests.get(
+                    img_url,
+                    auth=(os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN')),
+                    timeout=25,
+                )
+                if _im.status_code == 200 and _im.content:
+                    ctype = _im.headers.get('Content-Type', 'image/jpeg')
+                    ext = 'png' if 'png' in ctype else ('pdf' if 'pdf' in ctype else 'jpg')
+                    anexo = (f'cnh.{ext}', ctype, _im.content)
+                    print(f'[create-contact] CNH baixada do Twilio: {len(_im.content)} bytes ({ctype})')
+                else:
+                    print(f'[create-contact] CNH não baixou: HTTP {_im.status_code}')
+            except Exception as e:
+                print(f'[create-contact] falha ao baixar a CNH (segue sem anexo): {e}')
+
+        # Monta multipart manualmente (texto + arquivo binário)
         boundary = 'HQBoundary1234567890'
-        body_parts = []
+        partes = []
         for key, value in fields.items():
             if value:
-                body_parts.append(
+                partes.append(
                     f'--{boundary}\r\n'
                     f'Content-Disposition: form-data; name="{key}"\r\n\r\n'
-                    f'{value}'
+                    f'{value}\r\n'.encode('utf-8')
                 )
-        body = '\r\n'.join(body_parts) + f'\r\n--{boundary}--'
-        body_bytes = body.encode('utf-8')
+        if anexo:
+            fname, ctype, blob = anexo
+            partes.append(
+                f'--{boundary}\r\n'
+                f'Content-Disposition: form-data; name="f272"; filename="{fname}"\r\n'
+                f'Content-Type: {ctype}\r\n\r\n'.encode('utf-8')
+            )
+            partes.append(blob)
+            partes.append(b'\r\n')
+        partes.append(f'--{boundary}--\r\n'.encode('utf-8'))
+        body_bytes = b''.join(partes)
  
         print(f"[create-contact] enviando para HQ...")
  
