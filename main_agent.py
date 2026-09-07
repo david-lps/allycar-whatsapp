@@ -344,13 +344,21 @@ FLUXO (conduza nesta ordem):
     • endereço completo: rua, número, cidade, estado, CEP e país
     • confirmar datas E horários de retirada/devolução
     • ONDE RETIRAR e ONDE DEVOLVER o carro (ver a regra de LOCAIS logo abaixo)
+    • COMO ELE QUER PAGAR (pergunte sempre — ver a regra de FORMA DE PAGAMENTO abaixo)
     • confirmar o modelo  • quais itens de bebê precisa (bebê conforto, cadeirinha,
       carrinho simples ou duplo — todos INCLUSOS, sem custo)
   Explique que é rapidinho e que é o necessário para emitir a reserva. Quando tiver TUDO,
   chame fechar_reserva e envie ao cliente o LINK DE PAGAMENTO que a ferramenta devolver,
   exatamente como veio. Diga que a reserva fica garantida assim que o pagamento for confirmado.
-  PAGAMENTO: cliente no BRASIL que pedir PIX ou parcelamento → pagamento="pix_ou_parcelado";
-  em qualquer outro caso → pagamento="stripe".
+  FORMA DE PAGAMENTO — SEMPRE PERGUNTE antes de fechar; nunca escolha por ele.
+  Para cliente no BRASIL, ofereça as três:
+    • PIX (com 3,5% de desconto)        → pagamento="pix"
+    • Parcelado em até 12× no cartão    → pagamento="parcelado"
+    • Cartão de crédito ou débito à vista → pagamento="cartao"
+  Para cliente de FORA do Brasil não há escolha a fazer: é cartão de crédito ou débito
+  (pagamento="cartao"). Não ofereça PIX nem parcelamento a eles.
+  Cada opção gera um link diferente — a ferramenta cuida disso; você só precisa registrar
+  corretamente o que o cliente escolheu.
   NUNCA peça número de cartão, CVV ou senha no chat — o pagamento é sempre pelo link.
   Se faltar algum dado, PERGUNTE; nunca invente. Se a ferramenta falhar, ou se o cliente
   preferir falar com uma pessoa, use acionar_consultor_pagamento.
@@ -493,8 +501,10 @@ TOOLS = [
                 },
                 "pagamento": {
                     "type": "string",
-                    "enum": ["stripe", "pix_ou_parcelado"],
-                    "description": "pix_ou_parcelado APENAS para cliente no Brasil que pediu PIX ou parcelamento; nos demais casos stripe",
+                    "enum": ["pix", "parcelado", "cartao"],
+                    "description": ("Como o cliente ESCOLHEU pagar. 'pix' e 'parcelado' só para "
+                                    "cliente no Brasil; 'cartao' (crédito/débito à vista) para "
+                                    "todos os demais casos."),
                 },
             },
             "required": ["primeiro_nome", "sobrenome", "email", "nascimento", "cnh",
@@ -879,7 +889,10 @@ def _fechar_reserva(conversa, **d):
     # Caminho do PIX/parcelamento (só Brasil): a página cuida de CPF e endereço.
     # Ela EXIGE amount + order + ruuid — sem isso mostra "Não recebemos os dados
     # da reserva". Se o confirm não trouxe o total/uuid, buscamos a reserva.
-    quer_br = str(d.get("pagamento") or "").lower() in ("pix", "pix_ou_parcelado", "parcelado", "braza")
+    forma = str(d.get("pagamento") or "").lower()
+    # PIX e parcelamento passam pela Braza; cartão à vista vai no link do Stripe.
+    quer_br = forma in ("pix", "parcelado", "pix_ou_parcelado", "braza")
+    metodo_braza = "pix" if forma in ("pix", "pix_ou_parcelado") else "card"
     if quer_br and reserva_id:
         if not total or not reserva_uuid:
             try:
@@ -900,7 +913,7 @@ def _fechar_reserva(conversa, **d):
             valor = ""
         if valor:
             link = (f"{SITE_PAGAMENTO_BR}?amount={valor}&order={reserva_id}"
-                    f"&ruuid={reserva_uuid}&method=pix")
+                    f"&ruuid={reserva_uuid}&method={metodo_braza}")
         else:
             # Sem o valor a página não funciona — melhor cair no Stripe do que
             # mandar um link que mostra erro para o cliente.
