@@ -250,6 +250,12 @@ HORÁRIOS, TOLERÂNCIA E IMPOSTOS (regras da casa — siga à risca):
   AVISE UMA VEZ SÓ. Dito o aviso e oferecida a alternativa, siga a conversa normalmente com o
   horário que o cliente pediu; NÃO repita o alerta nem fique cobrando que ele confirme o
   horário. Se ele quiser mudar, ele diz.
+- PREÇO MUDA COM O HORÁRIO: uma cotação feita com 09:00 → 09:00 vale para AQUELE período. Se o
+  cliente escolher outros horários e isso mudar o número de diárias, consulte os preços DE NOVO
+  com os horários dele (consultar_disponibilidade_precos aceita hora_retirada/hora_devolucao) e
+  INFORME o novo valor, para ele não ser surpreendido depois — é o nosso ZERO SURPRESAS.
+  Diga o valor com naturalidade ("com esse horário fica X"), sem cobrar decisão: ajustar ou não
+  é escolha dele. Nunca feche a reserva com um valor diferente do último que você informou.
   SE O CLIENTE RECLAMAR da tolerância: acolha e explique com naturalidade que 1 hora de
   tolerância é PADRÃO DE MERCADO — inclusive MUITAS locadoras não oferecem tolerância NENHUMA,
   cobrando a diária extra já no primeiro minuto de atraso. Não seja defensivo nem cite nomes de
@@ -849,15 +855,43 @@ def _fechar_reserva(conversa, **d):
         return {"status": "erro", "instrucao": "Não consegui criar a reserva agora. Use acionar_consultor_pagamento."}
 
     dados = j2.get("data") or {}
-    reserva_id = (dados.get("reservation") or {}).get("id") or dados.get("id") or j2.get("reservation_id")
+    rsv = dados.get("reservation") or {}
+    reserva_id = rsv.get("id") or dados.get("id") or j2.get("reservation_id")
+    reserva_uuid = rsv.get("uuid") or dados.get("uuid") or ""
+    total = rsv.get("total_price") or rsv.get("uninvoiced_amount")
     link = (j2.get("payment_link")
             or (dados.get("transaction") or {}).get("payment_link")
             or dados.get("payment_link"))
 
-    # Caminho do PIX/parcelamento (só Brasil): a página cuida de CPF e endereço
+    # Caminho do PIX/parcelamento (só Brasil): a página cuida de CPF e endereço.
+    # Ela EXIGE amount + order + ruuid — sem isso mostra "Não recebemos os dados
+    # da reserva". Se o confirm não trouxe o total/uuid, buscamos a reserva.
     quer_br = str(d.get("pagamento") or "").lower() in ("pix", "pix_ou_parcelado", "parcelado", "braza")
     if quer_br and reserva_id:
-        link = f"{SITE_PAGAMENTO_BR}?order={reserva_id}&method=pix"
+        if not total or not reserva_uuid:
+            try:
+                rr = requests.get(
+                    f"{HQ_API_HOST}/api-america-miami/car-rental/reservations/{reserva_id}",
+                    headers={"Authorization": HQ_API_AUTH, "Accept": "application/json"},
+                    timeout=25,
+                )
+                _d = (rr.json() or {}).get("data") or {}
+                _r = _d.get("reservation") or _d
+                total = total or _r.get("total_price") or _r.get("uninvoiced_amount")
+                reserva_uuid = reserva_uuid or _r.get("uuid") or ""
+            except Exception as e:
+                print(f"⚠️ [checkout] não consegui buscar o total da reserva {reserva_id}: {e}")
+        try:
+            valor = f"{float(total):.2f}"
+        except (TypeError, ValueError):
+            valor = ""
+        if valor:
+            link = (f"{SITE_PAGAMENTO_BR}?amount={valor}&order={reserva_id}"
+                    f"&ruuid={reserva_uuid}&method=pix")
+        else:
+            # Sem o valor a página não funciona — melhor cair no Stripe do que
+            # mandar um link que mostra erro para o cliente.
+            print(f"⚠️ [checkout] sem total para a reserva {reserva_id} — usando o link do Stripe")
 
     conversa["reservou"] = True
     conversa["escalar"] = True          # equipe recebe o email com a conversa
