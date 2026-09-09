@@ -428,7 +428,7 @@ def _janela_info(st):
 
 
 # Filtros do painel: cada card leva a um conjunto de folhas (None = todos)
-_RAMO_PRECO = {"Não teve continuidade", "Reclamou de preço", "Solicitou reserva"}
+_RAMO_PRECO = {"Não teve continuidade", "Reclamou de preço", "Solicitou reserva", "Reservou"}
 FILTROS = {
     "todos": None,
     "sem_interacao": {"Sem interação"},
@@ -440,6 +440,7 @@ FILTROS = {
     "nao_continuidade": {"Não teve continuidade"},
     "reclamou": {"Reclamou de preço"},
     "reserva": {"Solicitou reserva"},
+    "reservou_marcado": {"Reservou"},
 }
 FILTRO_LABEL = {
     "todos": "Todas as conversas", "sem_interacao": "Sem interação",
@@ -447,6 +448,9 @@ FILTRO_LABEL = {
     "fora": "Fora de Orlando", "consultor": "Solicitou consultor",
     "viram_preco": "Viram preço", "nao_continuidade": "Não teve continuidade",
     "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
+    # "Reservou" é a marcação MANUAL (o David sabe que fechou); "Reservaram de
+    # fato" é automático, casando o telefone com uma reserva ativa na HQ.
+    "reservou_marcado": "Reservou (marcado)",
     "clicou": "Clicaram no site", "reservou": "Reservaram de fato",
 }
 # Ordem dos filtros na barra do painel: segue o funil, do topo ao fundo.
@@ -454,12 +458,13 @@ FILTRO_LABEL = {
 FILTRO_ORDEM = (
     "todos", "sem_interacao", "conversa_iniciada", "em_conversa",
     "fora", "consultor", "viram_preco", "nao_continuidade",
-    "reclamou", "reserva", "clicou", "reservou",
+    "reclamou", "reserva", "reservou_marcado", "clicou", "reservou",
 )
 # Categorias válidas para ajuste manual da situação
+# (espelhadas no SITS do JS do painel — mexeu aqui, mexa lá)
 SITUACOES_VALIDAS = {
     "Sem interação", "Em conversa", "Fora de Orlando", "Solicitou consultor",
-    "Não teve continuidade", "Reclamou de preço", "Solicitou reserva",
+    "Não teve continuidade", "Reclamou de preço", "Solicitou reserva", "Reservou",
 }
 
 
@@ -1342,7 +1347,9 @@ def agent_stats_data():
     nao_cont = cats.get("Não teve continuidade", 0)
     fora_orlando = cats.get("Fora de Orlando", 0)
     conversa_iniciada = total - sem
-    viram_preco = reserva_chat + reclamou + nao_cont
+    # "Reservou" (marcação manual) também é gente que viu preço — sem somar aqui
+    # o lead sumiria dessa etapa do funil ao ser marcado.
+    viram_preco = reserva_chat + reclamou + nao_cont + cats.get("Reservou", 0)
 
     # "ref" = índice da etapa contra a qual o percentual é comparado.
     # Clicaram e Responderam são caminhos PARALELOS a partir de Leads (ref 0):
@@ -1538,6 +1545,7 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   th,td{text-align:left;padding:10px;border-bottom:1px solid #22303a;font-size:14px;vertical-align:top}
   th{color:#8696a0;font-weight:600}
   .tag{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;display:inline-block}
+  .t-resv{background:#f0c04a;color:#3a2c00}
   .t-res{background:#0b6b3a;color:#d7ffe8}
   .t-rec{background:#7a4a12;color:#ffe8c7}
   .t-nc{background:#2b3640;color:#cdd6db}
@@ -1597,7 +1605,7 @@ function chips(lista){
     c.appendChild(b);
   });
 }
-function tag(s){const m={'Solicitou reserva':'t-res','Reclamou de preço':'t-rec','Não teve continuidade':'t-nc','Solicitou consultor':'t-con','Fora de Orlando':'t-fora','Em conversa':'t-em','Sem interação':'t-sem'};return `<span class="tag ${m[s]||'t-em'}">${s}</span>`;}
+function tag(s){const m={'Reservou':'t-resv','Solicitou reserva':'t-res','Reclamou de preço':'t-rec','Não teve continuidade':'t-nc','Solicitou consultor':'t-con','Fora de Orlando':'t-fora','Em conversa':'t-em','Sem interação':'t-sem'};const ic=(s==='Reservou')?'🎫 ':'';return `<span class="tag ${m[s]||'t-em'}">${ic}${s}</span>`;}
 function fmtConversa(txt){
   const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
   let cur='c-def';  // fala atual (linhas de continuação herdam a cor)
@@ -1707,7 +1715,7 @@ async function modo(key,humano){
   await fetch('/agent/leads/modo'+qs(''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,humano})});
   load();
 }
-const SITS=['Sem interação','Em conversa','Fora de Orlando','Solicitou consultor','Não teve continuidade','Reclamou de preço','Solicitou reserva'];
+const SITS=['Sem interação','Em conversa','Fora de Orlando','Solicitou consultor','Não teve continuidade','Reclamou de preço','Solicitou reserva','Reservou'];
 function selectSit(key,manual){
   const opts=['<option value="">↻ automático</option>'].concat(
     SITS.map(s=>`<option value="${s}"${s===manual?' selected':''}>${s}</option>`));
