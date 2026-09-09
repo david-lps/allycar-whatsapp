@@ -449,6 +449,13 @@ FILTRO_LABEL = {
     "reclamou": "Reclamou de preço", "reserva": "Solicitou reserva",
     "clicou": "Clicaram no site", "reservou": "Reservaram de fato",
 }
+# Ordem dos filtros na barra do painel: segue o funil, do topo ao fundo.
+# "Todas" primeiro; os dois últimos são sinais (clique/reserva), não situação.
+FILTRO_ORDEM = (
+    "todos", "sem_interacao", "conversa_iniciada", "em_conversa",
+    "fora", "consultor", "viram_preco", "nao_continuidade",
+    "reclamou", "reserva", "clicou", "reservou",
+)
 # Categorias válidas para ajuste manual da situação
 SITUACOES_VALIDAS = {
     "Sem interação", "Em conversa", "Fora de Orlando", "Solicitou consultor",
@@ -1111,14 +1118,29 @@ def agent_leads_data():
     so_reservou = (filtro == "reservou")  # filtro especial: casou com reserva ativa
     reservas = _reservas_ativas_lista()
     itens = []
+    # Contagem de TODAS as conversas por filtro — os chips do painel precisam do
+    # número mesmo dos filtros que não estão ativos. Só classificação e telefone:
+    # o que é caro (resumo, transcrição, match na HQ) fica depois do filtro.
+    contagens = {k: 0 for k in FILTRO_LABEL}
     for row in agent_store.listar():
         st = row.get("state") or {}
-        if so_clicou and not st.get("site_clicou"):
-            continue
+        situacao = _classificar(st)  # mesma classificação-folha do funil
         reserva = _match_reserva(st.get("phone"), reservas)
+        clicou = bool(st.get("site_clicou"))
+
+        contagens["todos"] += 1
+        for _k, _folhas in FILTROS.items():
+            if _folhas is not None and situacao in _folhas:
+                contagens[_k] += 1
+        if clicou:
+            contagens["clicou"] += 1
+        if reserva:
+            contagens["reservou"] += 1
+
+        if so_clicou and not clicou:
+            continue
         if so_reservou and not reserva:
             continue
-        situacao = _classificar(st)  # mesma classificação-folha do funil
         if not so_clicou and not so_reservou and leafs is not None and situacao not in leafs:
             continue
         jan = _janela_info(st)
@@ -1173,6 +1195,8 @@ def agent_leads_data():
         "total": len(itens),
         "filtro": filtro,
         "filtro_label": FILTRO_LABEL.get(filtro, ""),
+        "filtros": [{"key": k, "label": FILTRO_LABEL[k], "n": contagens.get(k, 0)}
+                    for k in FILTRO_ORDEM],
         "leads": itens,
     }, 200
 
@@ -1533,16 +1557,46 @@ _LEADS_HTML = """<!doctype html><html lang="pt"><head><meta charset="utf-8">
   .c-con{color:#ffd479}
   .c-con b{color:#ffe6ad}
   .c-mot{color:#8696a0;margin-top:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 14px}
+  .chip{background:#202c33;color:#cdd6db;border:1px solid #2b3942;border-radius:999px;
+        padding:6px 12px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+  .chip:hover{background:#2a3942}
+  .chip--on{background:#0b6b3a;border-color:#128a4e;color:#eafff3;font-weight:600}
+  .chip .n{background:#0e1a21;color:#8696a0;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:700}
+  .chip--on .n{background:#075c31;color:#d7ffe8}
+  .chip--zero{opacity:.42}
 </style></head><body>
 <header><span>📊 Allycar — Leads do Agente</span><span><a id="statsLink" href="#" style="color:#8fd0ff;text-decoration:none;font-weight:600;margin-right:14px">📈 Estatísticas</a><button onclick="load()">Atualizar</button></span></header>
-<div class="wrap"><div id="info" style="color:#8696a0;margin-bottom:8px"></div>
+<div class="wrap"><div class="chips" id="chips"></div>
+<div id="info" style="color:#8696a0;margin-bottom:8px"></div>
 <table><thead><tr><th>Nome</th><th>Telefone</th><th>Idioma</th><th>Situação</th><th>Resumo (datas · carro · preços)</th><th>Atualizado</th><th></th></tr></thead>
 <tbody id="rows"></tbody></table></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
-const filtro=new URLSearchParams(location.search).get('filtro')||'';
+let filtro=new URLSearchParams(location.search).get('filtro')||'';
 function qs(f){const p=new URLSearchParams();if(token)p.set('token',token);if(f)p.set('filtro',f);const s=p.toString();return s?('?'+s):'';}
 document.getElementById('statsLink').href='/agent/stats'+qs('');
+// Filtro por situação: troca sem recarregar a página, mas mantém a URL
+// compartilhável (é a mesma querystring que os cards do funil usam).
+function setFiltro(f){
+  filtro=(f===filtro)?'':f;   // clicar no chip ativo limpa o filtro
+  history.replaceState(null,'','/agent/leads'+qs(filtro));
+  load();
+}
+function chips(lista){
+  const c=document.getElementById('chips');
+  c.innerHTML='';
+  (lista||[]).forEach(f=>{
+    const ativo=(filtro||'todos')===f.key;
+    const b=document.createElement('button');
+    b.className='chip'+(ativo?' chip--on':'')+((f.n===0&&f.key!=='todos')?' chip--zero':'');
+    b.appendChild(document.createTextNode(f.label));
+    const n=document.createElement('span'); n.className='n'; n.textContent=f.n;
+    b.appendChild(n);
+    b.onclick=()=>setFiltro(f.key==='todos'?'':f.key);
+    c.appendChild(b);
+  });
+}
 function tag(s){const m={'Solicitou reserva':'t-res','Reclamou de preço':'t-rec','Não teve continuidade':'t-nc','Solicitou consultor':'t-con','Fora de Orlando':'t-fora','Em conversa':'t-em','Sem interação':'t-sem'};return `<span class="tag ${m[s]||'t-em'}">${s}</span>`;}
 function fmtConversa(txt){
   const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -1563,8 +1617,9 @@ async function load(){
   const r=await fetch('/agent/leads/data'+qs(filtro));
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
   const j=await r.json();
+  chips(j.filtros);
   if(j.filtro && j.filtro_label){
-    document.getElementById('info').innerHTML='Filtrando: <b>'+j.filtro_label+'</b> · '+j.total+' conversa(s) &nbsp; <a href="/agent/leads'+qs('')+'" style="color:#8fd0ff">✕ limpar filtro</a>';
+    document.getElementById('info').innerHTML='Filtrando: <b>'+j.filtro_label+'</b> · '+j.total+' conversa(s) &nbsp; <a href="#" onclick="setFiltro(&#39;&#39;);return false" style="color:#8fd0ff">✕ limpar filtro</a>';
   }else{
     document.getElementById('info').textContent=j.total+' conversa(s)';
   }
