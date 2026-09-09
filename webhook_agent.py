@@ -427,6 +427,13 @@ def _janela_info(st):
             "label": f"aberta · faltam {m // 60}h{m % 60:02d}m"}
 
 
+# Quantas conversas o painel VARRE (mesmo universo do funil, senão os dois
+# discordam) e quantas linhas ele MONTA por resposta (montar é caro: cada linha
+# carrega a transcrição inteira). A contagem dos chips e o total do filtro usam
+# a varredura completa; o limite só corta o que é renderizado.
+LIMITE_VARREDURA = 5000
+LIMITE_LISTA = 300
+
 # Filtros do painel: cada card leva a um conjunto de folhas (None = todos)
 _RAMO_PRECO = {"Não teve continuidade", "Reclamou de preço", "Solicitou reserva", "Reservou"}
 FILTROS = {
@@ -1123,11 +1130,16 @@ def agent_leads_data():
     so_reservou = (filtro == "reservou")  # filtro especial: casou com reserva ativa
     reservas = _reservas_ativas_lista()
     itens = []
+    encontrados = 0
     # Contagem de TODAS as conversas por filtro — os chips do painel precisam do
     # número mesmo dos filtros que não estão ativos. Só classificação e telefone:
     # o que é caro (resumo, transcrição, match na HQ) fica depois do filtro.
     contagens = {k: 0 for k in FILTRO_LABEL}
-    for row in agent_store.listar():
+    # Varre o MESMO universo do funil (antes eram 300 aqui e 5000 lá, então um
+    # lead antigo que reservou aparecia no funil e sumia da lista). O que limita
+    # a resposta é LIMITE_LISTA, aplicado DEPOIS do filtro — filtrar sempre
+    # devolve tudo o que casou.
+    for row in agent_store.listar(limit=LIMITE_VARREDURA):
         st = row.get("state") or {}
         situacao = _classificar(st)  # mesma classificação-folha do funil
         reserva = _match_reserva(st.get("phone"), reservas)
@@ -1148,6 +1160,11 @@ def agent_leads_data():
             continue
         if not so_clicou and not so_reservou and leafs is not None and situacao not in leafs:
             continue
+
+        encontrados += 1
+        if len(itens) >= LIMITE_LISTA:
+            continue  # já entrou na conta; só não monta a linha (transcrição é cara)
+
         jan = _janela_info(st)
         # Fase 2: cruza o IP do clique com as tentativas de reserva da HQ
         hq = None
@@ -1197,7 +1214,9 @@ def agent_leads_data():
             } if reserva else None),
         })
     return {
-        "total": len(itens),
+        "total": encontrados,        # quantas casaram com o filtro
+        "mostrando": len(itens),     # quantas vieram na resposta
+        "limite": LIMITE_LISTA,
         "filtro": filtro,
         "filtro_label": FILTRO_LABEL.get(filtro, ""),
         "filtros": [{"key": k, "label": FILTRO_LABEL[k], "n": contagens.get(k, 0)}
@@ -1626,10 +1645,13 @@ async function load(){
   if(!r.ok){document.getElementById('info').textContent='Não autorizado — adicione ?token= na URL.';return;}
   const j=await r.json();
   chips(j.filtros);
+  // Se a resposta veio cortada, dizemos — silenciar viraria "sumiu um lead".
+  const corte=(j.mostrando!==undefined && j.mostrando<j.total)
+    ?' <span style="color:#ffd479">· mostrando as '+j.mostrando+' mais recentes (filtre para ver o resto)</span>':'';
   if(j.filtro && j.filtro_label){
-    document.getElementById('info').innerHTML='Filtrando: <b>'+j.filtro_label+'</b> · '+j.total+' conversa(s) &nbsp; <a href="#" onclick="setFiltro(&#39;&#39;);return false" style="color:#8fd0ff">✕ limpar filtro</a>';
+    document.getElementById('info').innerHTML='Filtrando: <b>'+j.filtro_label+'</b> · '+j.total+' conversa(s)'+corte+' &nbsp; <a href="#" onclick="setFiltro(&#39;&#39;);return false" style="color:#8fd0ff">✕ limpar filtro</a>';
   }else{
-    document.getElementById('info').textContent=j.total+' conversa(s)';
+    document.getElementById('info').innerHTML=j.total+' conversa(s)'+corte;
   }
   const tb=document.getElementById('rows');tb.innerHTML='';
   j.leads.forEach((l,i)=>{
